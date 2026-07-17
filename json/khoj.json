@@ -38,7 +38,7 @@
       "type": "info"
     },
     {
-      "text": "Configure a chat model after installation: set OPENAI_BASE_URL in /opt/khoj/.env to an OpenAI-compatible endpoint (e.g. Ollama at http://<host>:11434/v1/) or add an API key, then restart the khoj service. See https://docs.khoj.dev/advanced/ollama.",
+      "text": "Connect a chat model backend after installation via the admin panel at /server/admin: add an 'AI Model API' with your OpenAI-compatible endpoint (e.g. Ollama at http://<host>:11434/v1/), then restart the khoj service to sync its models. Auto-configuration via OPENAI_BASE_URL in /opt/khoj/.env only applies on the very first service start. See https://docs.khoj.dev/advanced/ollama.",
       "type": "info"
     },
     {
