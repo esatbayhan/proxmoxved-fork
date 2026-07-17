@@ -1,0 +1,57 @@
+{
+  "name": "Khoj",
+  "slug": "khoj",
+  "categories": [
+    20
+  ],
+  "date_created": "2026-07-17",
+  "type": "ct",
+  "updateable": true,
+  "privileged": false,
+  "interface_port": 42110,
+  "documentation": "https://docs.khoj.dev/",
+  "website": "https://khoj.dev/",
+  "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/khoj.webp",
+  "config_path": "/opt/khoj/.env",
+  "description": "Khoj is a self-hostable AI second brain. It answers questions from your notes and documents (Markdown, Obsidian, Org-Mode, PDF and more) with semantic search and chat, using any online or self-hosted OpenAI-compatible model backend such as Ollama. Clients include the web app and official Obsidian and Emacs plugins.",
+  "install_methods": [
+    {
+      "type": "default",
+      "script": "ct/khoj.sh",
+      "config_path": "/opt/khoj/.env",
+      "resources": {
+        "cpu": 4,
+        "ram": 8192,
+        "hdd": 15,
+        "os": "Debian",
+        "version": "13"
+      }
+    }
+  ],
+  "default_credentials": {
+    "username": "admin@example.com",
+    "password": "Generated during installation"
+  },
+  "notes": [
+    {
+      "text": "The server runs in anonymous mode for single-user LAN use. Admin panel credentials (KHOJ_ADMIN_EMAIL / KHOJ_ADMIN_PASSWORD) are stored in /opt/khoj/.env.",
+      "type": "info"
+    },
+    {
+      "text": "Configure a chat model after installation: set OPENAI_BASE_URL in /opt/khoj/.env to an OpenAI-compatible endpoint (e.g. Ollama at http://<host>:11434/v1/) or add an API key, then restart the khoj service. See https://docs.khoj.dev/advanced/ollama.",
+      "type": "info"
+    },
+    {
+      "text": "KHOJ_DOMAIN in /opt/khoj/.env is set to the container IP at install time. If the container IP changes, update it and restart the service to avoid CSRF/login errors.",
+      "type": "warning"
+    },
+    {
+      "text": "The server uses unencrypted HTTP with anonymous mode enabled. Restrict access to a trusted local network or place a VPN or HTTPS reverse proxy in front of it before exposing it publicly.",
+      "type": "warning"
+    },
+    {
+      "text": "Embedding models (a few hundred MB) are downloaded from Hugging Face on first start, so the first indexing run can take a while.",
+      "type": "info"
+    }
+  ]
+}
