@@ -15,6 +15,7 @@ var_os="${var_os:-ubuntu}"
 var_version="${var_version:-26.04}"
 var_unprivileged="${var_unprivileged:-1}"
 var_gpu="${var_gpu:-yes}"
+var_fuse="${var_fuse:-yes}"
 
 # Desktop packages ship profile.d scripts (im-config) that are not strict-mode-safe;
 # skip re-sourcing them via ensure_profile_loaded during in-container update runs

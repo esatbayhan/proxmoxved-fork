@@ -43,6 +43,11 @@ echo "${DESKTOP_USER}:${DESKTOP_PASSWORD}" | chpasswd
 msg_ok "Created Desktop User"
 
 msg_info "Enabling RDP Remote Login"
+# Ubuntu's fusermount3 AppArmor profile blocks the unix-socket fd handover under
+# LXC-namespaced AppArmor; FUSE mounts of unprivileged users then fail and
+# gnome-remote-desktop's session handover aborts, dropping every RDP login
+ln -sf /etc/apparmor.d/fusermount3 /etc/apparmor.d/disable/fusermount3
+apparmor_parser -R /etc/apparmor.d/fusermount3 2>/dev/null || true
 systemctl mask -q sleep.target suspend.target hibernate.target hybrid-sleep.target
 $STD systemctl set-default graphical.target
 $STD openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=$(hostname)" \
