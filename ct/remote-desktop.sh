@@ -45,21 +45,33 @@ function update_script() {
 start
 build_container
 
-if [[ -e /dev/kvm ]]; then
-  msg_info "Configuring /dev/kvm passthrough"
-  kvm_gid=$(pct exec "$CTID" -- sh -c "getent group kvm | cut -d: -f3")
-  if [[ -z "$kvm_gid" ]]; then
-    pct exec "$CTID" -- groupadd -f kvm
-    kvm_gid=$(pct exec "$CTID" -- sh -c "getent group kvm | cut -d: -f3")
+# /dev/kvm passthrough is opt-in: most remote desktops don't need nested
+# virtualization, and not exposing the device keeps the container tighter
+if [[ -z "${var_kvm:-}" ]]; then
+  var_kvm="no"
+  if [[ -t 0 ]] && whiptail --backtitle "Proxmox VE Helper Scripts" --title "KVM PASSTHROUGH" --defaultno \
+    --yesno "Pass /dev/kvm into the container?\n\nEnables hardware-accelerated virtualization inside the desktop, e.g. for the Android Emulator or QEMU VMs. Leave disabled if you do not need nested virtualization." 12 62; then
+    var_kvm="yes"
   fi
-  dev_idx=0
-  while grep -q "^dev${dev_idx}:" "/etc/pve/lxc/${CTID}.conf"; do
-    dev_idx=$((dev_idx + 1))
-  done
-  pct set "$CTID" --dev${dev_idx} "/dev/kvm,gid=${kvm_gid}"
-  msg_ok "Configured /dev/kvm passthrough"
-else
-  msg_warn "/dev/kvm not found on host - skipping KVM passthrough (Android Emulator/VMs will be slow)"
+fi
+
+if [[ "$var_kvm" == "yes" ]]; then
+  if [[ -e /dev/kvm ]]; then
+    msg_info "Configuring /dev/kvm passthrough"
+    kvm_gid=$(pct exec "$CTID" -- sh -c "getent group kvm | cut -d: -f3")
+    if [[ -z "$kvm_gid" ]]; then
+      pct exec "$CTID" -- groupadd -f kvm
+      kvm_gid=$(pct exec "$CTID" -- sh -c "getent group kvm | cut -d: -f3")
+    fi
+    dev_idx=0
+    while grep -q "^dev${dev_idx}:" "/etc/pve/lxc/${CTID}.conf"; do
+      dev_idx=$((dev_idx + 1))
+    done
+    pct set "$CTID" --dev${dev_idx} "/dev/kvm,gid=${kvm_gid}"
+    msg_ok "Configured /dev/kvm passthrough"
+  else
+    msg_warn "/dev/kvm not found on host - skipping KVM passthrough (Android Emulator/VMs will be slow)"
+  fi
 fi
 
 msg_info "Applying container tweaks for desktop workloads"

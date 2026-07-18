@@ -62,11 +62,17 @@ $STD grdctl --system rdp set-credentials "$DESKTOP_USER" "$DESKTOP_PASSWORD"
 systemctl enable -q --now gnome-remote-desktop
 msg_ok "Enabled RDP Remote Login"
 
-msg_info "Configuring Polkit for Remote Sessions"
-cat <<'EOF' >/etc/polkit-1/rules.d/49-remote-desktop.rules
-// RDP sessions are not "active" local sessions, so polkit would ask for the
-// admin password on actions a local user gets for free (reboot, color profiles).
-// Grant them to the admin (sudo) group without prompting.
+# Opt-in convenience: RDP sessions are not "active" local sessions, so polkit
+# asks for the admin password on reboot/power-off and color-manager actions.
+# Keeping the prompts is the safer default.
+if [[ -z "${POLKIT_NOPASS:-}" && -t 0 ]]; then
+  read -rp "Allow reboot/power-off and color-profile actions without password prompt in remote sessions? [y/N]: " POLKIT_NOPASS
+fi
+if [[ "${POLKIT_NOPASS,,}" =~ ^y ]]; then
+  msg_info "Configuring Polkit for Remote Sessions"
+  cat <<'EOF' >/etc/polkit-1/rules.d/49-remote-desktop.rules
+// Opt-in: grant the admin (sudo) group reboot/power-off and color-manager
+// actions without prompting in remote (non-"active") sessions.
 polkit.addRule(function(action, subject) {
   if (!subject.isInGroup("sudo"))
     return polkit.Result.NOT_HANDLED;
@@ -78,7 +84,8 @@ polkit.addRule(function(action, subject) {
   return polkit.Result.NOT_HANDLED;
 });
 EOF
-msg_ok "Configured Polkit for Remote Sessions"
+  msg_ok "Configured Polkit for Remote Sessions"
+fi
 
 msg_custom "🔑" "${GN}" "RDP credentials: ${DESKTOP_USER} / ${DESKTOP_PASSWORD}"
 
