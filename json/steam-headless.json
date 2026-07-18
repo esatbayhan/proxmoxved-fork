@@ -1,0 +1,57 @@
+{
+  "name": "Steam-Headless",
+  "slug": "steam-headless",
+  "categories": [
+    24
+  ],
+  "date_created": "2026-07-18",
+  "type": "ct",
+  "updateable": true,
+  "privileged": false,
+  "has_arm": false,
+  "interface_port": 5900,
+  "documentation": "https://help.steampowered.com/en/faqs/view/3E3D-BE6B-787D-A5D2",
+  "website": "https://store.steampowered.com/streaming/",
+  "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/steam.webp",
+  "config_path": "/home/steam/.config/sway/config",
+  "description": "Native headless Steam Remote Play host: a GPU-accelerated Steam client running in a virtual Wayland/XWayland session without any physical display. Log in once over VNC, then stream your games to any device running Steam or the Steam Link app on the same network.",
+  "install_methods": [
+    {
+      "type": "default",
+      "script": "ct/steam-headless.sh",
+      "resources": {
+        "cpu": 6,
+        "ram": 16384,
+        "hdd": 64,
+        "os": "Ubuntu",
+        "version": "26.04"
+      }
+    }
+  ],
+  "default_credentials": {
+    "username": "steam",
+    "password": null
+  },
+  "notes": [
+    {
+      "text": "A GPU (rendering and video encode) is required; the script passes it through automatically via `var_gpu`.",
+      "type": "info"
+    },
+    {
+      "text": "Log in to Steam once with a VeNCrypt-capable VNC client (TigerVNC, Remmina) on port 5900; the generated password is shown at the end of the installation.",
+      "type": "info"
+    },
+    {
+      "text": "Stream by signing in with the same Steam account on the client device; Remote Play discovery needs client and container on the same network (TCP/UDP 27031-27036).",
+      "type": "info"
+    },
+    {
+      "text": "Game libraries grow quickly. The root disk is thin-provisioned; enlarge it anytime with `pct resize <ctid> rootfs +<size>G`.",
+      "type": "info"
+    },
+    {
+      "text": "Virtual gamepad support installs a udev rule and a modules-load entry on the Proxmox host and binds /dev/input into the container; it can be declined during installation.",
+      "type": "warning"
+    }
+  ]
+}
