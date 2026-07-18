@@ -16,6 +16,10 @@ var_version="${var_version:-26.04}"
 var_unprivileged="${var_unprivileged:-1}"
 var_gpu="${var_gpu:-yes}"
 
+# Desktop packages ship profile.d scripts (im-config) that are not strict-mode-safe;
+# skip re-sourcing them via ensure_profile_loaded during in-container update runs
+export _PROFILE_LOADED=1
+
 header_info "$APP"
 variables
 color
@@ -53,17 +57,18 @@ if [[ -e /dev/kvm ]]; then
   done
   pct set "$CTID" --dev${dev_idx} "/dev/kvm,gid=${kvm_gid}"
   pct reboot "$CTID"
-  for i in {1..15}; do
-    IP=$(pct exec "$CTID" -- ip a s dev eth0 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
-    [[ -n "$IP" ]] && break
-    sleep 2
-  done
   msg_ok "Configured /dev/kvm passthrough"
 else
   msg_warn "/dev/kvm not found on host - skipping KVM passthrough (Android Emulator/VMs will be slow)"
 fi
 
 description
+
+for _ in {1..15}; do
+  IP=$(pct exec "$CTID" -- ip a s dev eth0 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
+  [[ -n "$IP" ]] && break
+  sleep 2
+done
 
 msg_ok "Completed Successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
