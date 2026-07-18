@@ -1,0 +1,49 @@
+{
+    "name": "Remote-Desktop",
+    "slug": "remote-desktop",
+    "categories": [
+        2
+    ],
+    "date_created": "2026-07-18",
+    "type": "ct",
+    "updateable": true,
+    "privileged": false,
+    "has_arm": false,
+    "interface_port": null,
+    "documentation": "https://gitlab.gnome.org/GNOME/gnome-remote-desktop",
+    "website": "https://ubuntu.com/desktop",
+    "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/ubuntu.webp",
+    "description": "A general-purpose remote desktop workstation container: Ubuntu with the GNOME desktop, accessible from any RDP client via GNOME Remote Desktop headless remote login. GPU passthrough (VAAPI) and /dev/kvm are configured automatically, making it suitable for development environments (IDEs, Android Emulator) and other desktop workloads.",
+    "install_methods": [
+        {
+            "type": "default",
+            "script": "ct/remote-desktop.sh",
+            "config_path": null,
+            "resources": {
+                "cpu": 4,
+                "ram": 8192,
+                "hdd": 24,
+                "os": "Ubuntu",
+                "version": "26.04"
+            }
+        }
+    ],
+    "default_credentials": {
+        "username": null,
+        "password": null
+    },
+    "notes": [
+        {
+            "text": "Connect with any RDP client (e.g. Remmina, Windows App) to port 3389 and log in with the desktop user created during installation.",
+            "type": "info"
+        },
+        {
+            "text": "The desktop user is a sudoer. Install your applications (IDEs, browsers, etc.) directly inside the remote session.",
+            "type": "info"
+        },
+        {
+            "text": "GPU passthrough requires the GPU to be bound to host drivers (not vfio-pci). /dev/kvm passthrough enables hardware-accelerated virtualization, e.g. for the Android Emulator.",
+            "type": "info"
+        }
+    ]
+}
