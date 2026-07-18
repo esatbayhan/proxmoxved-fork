@@ -53,6 +53,11 @@ if [[ -e /dev/kvm ]]; then
   done
   pct set "$CTID" --dev${dev_idx} "/dev/kvm,gid=${kvm_gid}"
   pct reboot "$CTID"
+  for i in {1..15}; do
+    IP=$(pct exec "$CTID" -- ip a s dev eth0 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -1)
+    [[ -n "$IP" ]] && break
+    sleep 2
+  done
   msg_ok "Configured /dev/kvm passthrough"
 else
   msg_warn "/dev/kvm not found on host - skipping KVM passthrough (Android Emulator/VMs will be slow)"

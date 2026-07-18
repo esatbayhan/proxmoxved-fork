@@ -44,6 +44,10 @@
         {
             "text": "GPU passthrough requires the GPU to be bound to host drivers (not vfio-pci). /dev/kvm passthrough enables hardware-accelerated virtualization, e.g. for the Android Emulator.",
             "type": "info"
+        },
+        {
+            "text": "No browser is preinstalled: Ubuntu's Firefox is snap-based and cannot be installed during container build. Install a browser inside the session, e.g. via snap, Flatpak or vendor deb.",
+            "type": "info"
         }
     ]
 }
