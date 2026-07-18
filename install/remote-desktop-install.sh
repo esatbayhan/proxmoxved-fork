@@ -62,6 +62,24 @@ $STD grdctl --system rdp set-credentials "$DESKTOP_USER" "$DESKTOP_PASSWORD"
 systemctl enable -q --now gnome-remote-desktop
 msg_ok "Enabled RDP Remote Login"
 
+msg_info "Configuring Polkit for Remote Sessions"
+cat <<'EOF' >/etc/polkit-1/rules.d/49-remote-desktop.rules
+// RDP sessions are not "active" local sessions, so polkit would ask for the
+// admin password on actions a local user gets for free (reboot, color profiles).
+// Grant them to the admin (sudo) group without prompting.
+polkit.addRule(function(action, subject) {
+  if (!subject.isInGroup("sudo"))
+    return polkit.Result.NOT_HANDLED;
+  if (action.id.indexOf("org.freedesktop.color-manager.") === 0 ||
+      action.id.indexOf("org.freedesktop.login1.reboot") === 0 ||
+      action.id.indexOf("org.freedesktop.login1.power-off") === 0) {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NOT_HANDLED;
+});
+EOF
+msg_ok "Configured Polkit for Remote Sessions"
+
 msg_custom "🔑" "${GN}" "RDP credentials: ${DESKTOP_USER} / ${DESKTOP_PASSWORD}"
 
 motd_ssh

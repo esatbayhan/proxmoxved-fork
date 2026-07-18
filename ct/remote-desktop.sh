@@ -57,11 +57,16 @@ if [[ -e /dev/kvm ]]; then
     dev_idx=$((dev_idx + 1))
   done
   pct set "$CTID" --dev${dev_idx} "/dev/kvm,gid=${kvm_gid}"
-  pct reboot "$CTID"
   msg_ok "Configured /dev/kvm passthrough"
 else
   msg_warn "/dev/kvm not found on host - skipping KVM passthrough (Android Emulator/VMs will be slow)"
 fi
+
+msg_info "Applying container tweaks for desktop workloads"
+# bubblewrap (flatpak) writes sandbox sysctls; drop the read-only /proc/sys overmount
+echo "lxc.mount.auto: proc:rw" >>"/etc/pve/lxc/${CTID}.conf"
+pct reboot "$CTID"
+msg_ok "Applied container tweaks for desktop workloads"
 
 description
 
