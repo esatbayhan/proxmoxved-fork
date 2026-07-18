@@ -13,7 +13,7 @@
     "documentation": "https://gitlab.gnome.org/GNOME/gnome-remote-desktop",
     "website": "https://ubuntu.com/desktop",
     "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/ubuntu.webp",
-    "description": "A general-purpose remote desktop workstation container: Ubuntu with the GNOME desktop, accessible from any RDP client via GNOME Remote Desktop headless remote login. GPU passthrough (VAAPI) and /dev/kvm are configured automatically, making it suitable for development environments (IDEs, Android Emulator via opt-in /dev/kvm) and other desktop workloads.",
+    "description": "A general-purpose remote desktop workstation container: Ubuntu with the GNOME desktop, accessible from any RDP client via GNOME Remote Desktop headless remote login. GPU passthrough (VAAPI) is configured automatically and /dev/kvm can be passed through as an opt-in, making it suitable for development environments (IDEs, Android Emulator) and other desktop workloads.",
     "install_methods": [
         {
             "type": "default",
