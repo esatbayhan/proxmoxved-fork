@@ -133,15 +133,15 @@ WantedBy=steam-headless.target
 EOF
 
 # Browser-based login (noVNC) so no VNC client is needed for the one-time Steam
-# sign-in; credentials stay protected because the RFB stream itself is
-# RSA-AES-encrypted end to end, independent of the plain-HTTP page
+# sign-in. Must be served over HTTPS: noVNC's Apple-DH auth needs
+# window.crypto.subtle, which browsers only expose in secure contexts
 cat <<'EOF' >/home/steam/.config/systemd/user/wayvnc-web.service
 [Unit]
 Description=Browser access (noVNC) to the headless Steam session
 After=wayvnc.service
 
 [Service]
-ExecStart=/usr/bin/websockify --web /usr/share/novnc 6080 localhost:5900
+ExecStart=/usr/bin/websockify --web /usr/share/novnc --cert %h/.config/wayvnc/tls.crt --key %h/.config/wayvnc/tls.key 6080 localhost:5900
 Restart=on-failure
 RestartSec=5
 
@@ -177,12 +177,15 @@ msg_ok "Configured Headless Session"
 
 msg_info "Configuring Login Access (Browser + VNC)"
 mkdir -p /home/steam/.config/wayvnc
+# TLS cert is for websockify's HTTPS page, NOT for wayvnc: with TLS credentials
+# configured, wayvnc puts VeNCrypt (X509-only subtypes) first in its security
+# list and noVNC picks strictly in server order, running into a dead end.
+# Without them wayvnc offers RSA-AES (TigerVNC & co.) and Apple DH (noVNC,
+# macOS Screen Sharing) - both authenticated AND encrypted inside the RFB
+# stream. relax_encryption enables these; nettle needs the RSA key as PKCS#1
 $STD openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=$(hostname)" \
   -keyout /home/steam/.config/wayvnc/tls.key \
   -out /home/steam/.config/wayvnc/tls.crt
-# RSA-AES credentials: noVNC in the browser and macOS Screen Sharing cannot do
-# wayvnc's VeNCrypt-TLS security types, but they can do RSA-AES / Apple DH,
-# which relax_encryption enables (nettle needs the key in PKCS#1 format)
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /home/steam/.config/wayvnc/rsa_key.pem 2>/dev/null
 $STD openssl rsa -traditional -in /home/steam/.config/wayvnc/rsa_key.pem -out /home/steam/.config/wayvnc/rsa_key.pem
 cat <<EOF >/home/steam/.config/wayvnc/config
@@ -192,8 +195,6 @@ enable_auth=true
 relax_encryption=true
 username=steam
 password=${VNC_PASSWORD}
-private_key_file=/home/steam/.config/wayvnc/tls.key
-certificate_file=/home/steam/.config/wayvnc/tls.crt
 rsa_private_key_file=/home/steam/.config/wayvnc/rsa_key.pem
 EOF
 chmod 600 /home/steam/.config/wayvnc/config /home/steam/.config/wayvnc/tls.key /home/steam/.config/wayvnc/rsa_key.pem

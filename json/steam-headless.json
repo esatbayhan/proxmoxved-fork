@@ -38,7 +38,7 @@
       "type": "info"
     },
     {
-      "text": "Log in to Steam once at http://<container-ip>:6080/vnc.html (or scan the QR code with the Steam Mobile App); the generated password is shown at the end of the installation. VNC clients and macOS Screen Sharing can use port 5900 instead.",
+      "text": "Log in to Steam once at https://<container-ip>:6080/vnc.html (self-signed certificate; or scan the QR code with the Steam Mobile App); the generated password is shown at the end of the installation. VNC clients and macOS Screen Sharing can use port 5900 instead.",
       "type": "info"
     },
     {

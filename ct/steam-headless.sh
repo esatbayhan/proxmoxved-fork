@@ -102,7 +102,7 @@ done
 
 msg_ok "Completed Successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
-echo -e "${INFO}${YW}Log in to Steam once in your browser (or scan the QR code with the Steam Mobile App):${CL}"
-echo -e "${GATEWAY}${BGN}http://${IP}:6080/vnc.html${CL}"
-echo -e "${INFO}${YW}VNC clients (TigerVNC, Remmina, macOS Screen Sharing) can connect to ${IP}:5900 instead${CL}"
+echo -e "${INFO}${YW}Log in to Steam once in your browser (accept the self-signed certificate; scan the QR code with the Steam Mobile App for the easiest login):${CL}"
+echo -e "${GATEWAY}${BGN}https://${IP}:6080/vnc.html${CL}"
+echo -e "${INFO}${YW}VNC clients (TigerVNC, macOS Screen Sharing) can connect to ${IP}:5900 instead${CL}"
 echo -e "${INFO}${YW}Afterwards start Steam on your other device with the same account and stream via Remote Play${CL}"
