@@ -40,6 +40,24 @@ groupadd -f input
 useradd -m -s /bin/bash -G video,render,input steam
 msg_ok "Created Steam User"
 
+msg_info "Bootstrapping Steam Client"
+# Pre-run the launcher's first-run bootstrap so its interactive zenity install
+# prompt never appears in the headless session; version, sha256 and url are the
+# pins hardcoded in /usr/games/steam itself, so this cannot drift from the
+# packaged launcher
+# shellcheck disable=SC2154
+eval "$(grep -E '^(version|deb_version|sha256|url)=' /usr/games/steam)"
+STEAMDIR="/home/steam/.steam/debian-installation"
+mkdir -p "${STEAMDIR}/deb-installer"
+curl -fsSL -o "${STEAMDIR}/deb-installer/steam.tar.gz" "${url}"
+echo "${sha256} *${STEAMDIR}/deb-installer/steam.tar.gz" | sha256sum -c - >/dev/null
+tar -C "${STEAMDIR}/deb-installer" -zxf "${STEAMDIR}/deb-installer/steam.tar.gz" steam-launcher/bootstraplinux_ubuntu12_32.tar.xz
+mv "${STEAMDIR}/deb-installer/steam-launcher/bootstraplinux_ubuntu12_32.tar.xz" "${STEAMDIR}/bootstrap.tar.xz"
+rm -f "${STEAMDIR}/deb-installer/steam.tar.gz"
+tar -C "${STEAMDIR}" -xf "${STEAMDIR}/bootstrap.tar.xz"
+echo "${deb_version}" >"${STEAMDIR}/deb-installer/version"
+msg_ok "Bootstrapped Steam Client"
+
 msg_info "Configuring Virtual Audio Sink"
 # The container has no sound hardware; Remote Play captures game audio from the
 # monitor of this null sink
