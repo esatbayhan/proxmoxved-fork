@@ -102,7 +102,9 @@ done
 
 msg_ok "Completed Successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
-echo -e "${INFO}${YW}Log in to Steam once in your browser (accept the self-signed certificate; scan the QR code with the Steam Mobile App for the easiest login):${CL}"
-echo -e "${GATEWAY}${BGN}https://${IP}:6080/vnc.html${CL}"
-echo -e "${INFO}${YW}VNC clients (TigerVNC, macOS Screen Sharing) can connect to ${IP}:5900 instead${CL}"
-echo -e "${INFO}${YW}Afterwards start Steam on your other device with the same account and stream via Remote Play${CL}"
+echo -e "${INFO}${YW}VNC only runs on demand. For the one-time setup, start browser access from the container shell:${CL}"
+echo -e "${GATEWAY}${BGN}steam-headless vnc-web${CL}${YW} then open ${CL}${BGN}https://${IP}:6080/vnc.html${CL}${YW} (accept the self-signed certificate)${CL}"
+echo -e "${INFO}${YW}Log in to Steam (scan the QR code with the Steam Mobile App for the easiest login); VNC clients (TigerVNC, macOS Screen Sharing) can use 'steam-headless vnc' and port 5900 instead${CL}"
+echo -e "${INFO}${YW}Pair each client device once: start a stream from it and enter the PIN it shows into the Steam window via VNC${CL}"
+echo -e "${INFO}${YW}For Windows games enable Proton: Steam Settings -> Compatibility -> Enable Steam Play for all other titles${CL}"
+echo -e "${INFO}${YW}When you are done, run 'steam-headless stop' - Remote Play streaming works without VNC${CL}"

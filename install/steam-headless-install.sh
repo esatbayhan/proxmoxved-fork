@@ -119,6 +119,10 @@ cat <<'EOF' >/home/steam/.config/systemd/user/steam-headless.target
 Description=Steam Headless session services
 EOF
 
+# The VNC services are deliberately NOT wired into steam-headless.target: they
+# are only needed for the one-time login, device pairing and occasional
+# settings changes. The steam-headless CLI starts them on demand; enable them
+# permanently with 'systemctl --user enable wayvnc[-web]' if preferred
 cat <<'EOF' >/home/steam/.config/systemd/user/wayvnc.service
 [Unit]
 Description=VNC access to the headless Steam session
@@ -138,6 +142,7 @@ EOF
 cat <<'EOF' >/home/steam/.config/systemd/user/wayvnc-web.service
 [Unit]
 Description=Browser access (noVNC) to the headless Steam session
+Wants=wayvnc.service
 After=wayvnc.service
 
 [Service]
@@ -166,8 +171,6 @@ WantedBy=steam-headless.target
 EOF
 
 ln -s ../sway.service /home/steam/.config/systemd/user/default.target.wants/sway.service
-ln -s ../wayvnc.service /home/steam/.config/systemd/user/steam-headless.target.wants/wayvnc.service
-ln -s ../wayvnc-web.service /home/steam/.config/systemd/user/steam-headless.target.wants/wayvnc-web.service
 ln -s ../steam.service /home/steam/.config/systemd/user/steam-headless.target.wants/steam.service
 loginctl enable-linger steam 2>/dev/null || {
   mkdir -p /var/lib/systemd/linger
@@ -200,6 +203,64 @@ EOF
 chmod 600 /home/steam/.config/wayvnc/config /home/steam/.config/wayvnc/tls.key /home/steam/.config/wayvnc/rsa_key.pem
 chown -R steam:steam /home/steam
 msg_ok "Configured Login Access (Browser + VNC)"
+
+msg_info "Installing steam-headless CLI"
+cat <<'EOF' >/usr/local/bin/steam-headless
+#!/usr/bin/env bash
+# On-demand control of the VNC/browser access to the headless Steam session.
+# Started services live until 'steam-headless stop' or a container reboot.
+
+usage() {
+  cat <<'USAGE'
+Usage: steam-headless <command>
+
+Commands:
+  vnc      Start VNC access on port 5900 (for TigerVNC, macOS Screen Sharing)
+  vnc-web  Start browser access on https://<container-ip>:6080/vnc.html
+  stop     Stop VNC and browser access
+  status   Show status of the session services
+USAGE
+}
+
+userctl() {
+  runuser -u steam -- env "XDG_RUNTIME_DIR=/run/user/$(id -u steam)" systemctl --user "$@"
+}
+
+credentials() {
+  local pass
+  pass=$(awk -F= '$1 == "password" {print $2}' /home/steam/.config/wayvnc/config 2>/dev/null)
+  echo "Log in as user 'steam' with password '${pass:-<see /home/steam/.config/wayvnc/config>}'"
+  echo "Stop the access again with: steam-headless stop"
+}
+
+IP=$(hostname -I | awk '{print $1}')
+
+case "${1:-}" in
+vnc)
+  userctl start wayvnc.service
+  echo "VNC access running on ${IP}:5900"
+  credentials
+  ;;
+vnc-web)
+  userctl start wayvnc-web.service
+  echo "Browser access running on https://${IP}:6080/vnc.html (accept the self-signed certificate)"
+  credentials
+  ;;
+stop)
+  userctl stop wayvnc-web.service wayvnc.service
+  echo "VNC and browser access stopped"
+  ;;
+status)
+  userctl --no-pager --legend=no list-units sway.service steam.service 'wayvnc*.service'
+  ;;
+*)
+  usage
+  exit 1
+  ;;
+esac
+EOF
+chmod 755 /usr/local/bin/steam-headless
+msg_ok "Installed steam-headless CLI"
 
 msg_custom "🔑" "${GN}" "VNC credentials: steam / ${VNC_PASSWORD}"
 

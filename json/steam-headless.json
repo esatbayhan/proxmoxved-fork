@@ -38,7 +38,7 @@
       "type": "info"
     },
     {
-      "text": "Log in to Steam once at https://<container-ip>:6080/vnc.html (self-signed certificate; or scan the QR code with the Steam Mobile App); the generated password is shown at the end of the installation. VNC clients and macOS Screen Sharing can use port 5900 instead.",
+      "text": "VNC only runs on demand: `steam-headless vnc-web` starts browser access at https://<container-ip>:6080/vnc.html (self-signed certificate), `steam-headless vnc` plain VNC on port 5900, `steam-headless stop` shuts both down. Use it for the one-time Steam login (scan the QR code with the Steam Mobile App), for pairing new client devices (PIN prompt) and for occasional settings changes; the generated password is shown at the end of the installation.",
       "type": "info"
     },
     {
