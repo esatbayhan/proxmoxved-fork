@@ -22,7 +22,7 @@ VNC_PASSWORD="${VNC_PASSWORD:-$(openssl rand -base64 18 | tr -dc 'a-zA-Z0-9' | h
 setup_hwaccel
 
 msg_info "Installing Headless Wayland Session"
-$STD apt install -y sway xwayland wayvnc pipewire-pulse wireplumber dbus-user-session fonts-liberation
+$STD apt install -y sway xwayland wayvnc novnc pipewire-pulse wireplumber dbus-user-session fonts-liberation
 msg_ok "Installed Headless Wayland Session"
 
 msg_info "Installing Steam"
@@ -132,6 +132,23 @@ RestartSec=5
 WantedBy=steam-headless.target
 EOF
 
+# Browser-based login (noVNC) so no VNC client is needed for the one-time Steam
+# sign-in; credentials stay protected because the RFB stream itself is
+# RSA-AES-encrypted end to end, independent of the plain-HTTP page
+cat <<'EOF' >/home/steam/.config/systemd/user/wayvnc-web.service
+[Unit]
+Description=Browser access (noVNC) to the headless Steam session
+After=wayvnc.service
+
+[Service]
+ExecStart=/usr/bin/websockify --web /usr/share/novnc 6080 localhost:5900
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=steam-headless.target
+EOF
+
 # WAYLAND_DISPLAY is unset so the Steam client always runs through XWayland,
 # where Remote Play capture and XTest input injection are reliable
 cat <<'EOF' >/home/steam/.config/systemd/user/steam.service
@@ -150,6 +167,7 @@ EOF
 
 ln -s ../sway.service /home/steam/.config/systemd/user/default.target.wants/sway.service
 ln -s ../wayvnc.service /home/steam/.config/systemd/user/steam-headless.target.wants/wayvnc.service
+ln -s ../wayvnc-web.service /home/steam/.config/systemd/user/steam-headless.target.wants/wayvnc-web.service
 ln -s ../steam.service /home/steam/.config/systemd/user/steam-headless.target.wants/steam.service
 loginctl enable-linger steam 2>/dev/null || {
   mkdir -p /var/lib/systemd/linger
@@ -157,23 +175,30 @@ loginctl enable-linger steam 2>/dev/null || {
 }
 msg_ok "Configured Headless Session"
 
-msg_info "Configuring VNC Access"
+msg_info "Configuring Login Access (Browser + VNC)"
 mkdir -p /home/steam/.config/wayvnc
 $STD openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=$(hostname)" \
   -keyout /home/steam/.config/wayvnc/tls.key \
   -out /home/steam/.config/wayvnc/tls.crt
+# RSA-AES credentials: noVNC in the browser and macOS Screen Sharing cannot do
+# wayvnc's VeNCrypt-TLS security types, but they can do RSA-AES / Apple DH,
+# which relax_encryption enables (nettle needs the key in PKCS#1 format)
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out /home/steam/.config/wayvnc/rsa_key.pem 2>/dev/null
+$STD openssl rsa -traditional -in /home/steam/.config/wayvnc/rsa_key.pem -out /home/steam/.config/wayvnc/rsa_key.pem
 cat <<EOF >/home/steam/.config/wayvnc/config
 address=0.0.0.0
 port=5900
 enable_auth=true
+relax_encryption=true
 username=steam
 password=${VNC_PASSWORD}
 private_key_file=/home/steam/.config/wayvnc/tls.key
 certificate_file=/home/steam/.config/wayvnc/tls.crt
+rsa_private_key_file=/home/steam/.config/wayvnc/rsa_key.pem
 EOF
-chmod 600 /home/steam/.config/wayvnc/config /home/steam/.config/wayvnc/tls.key
+chmod 600 /home/steam/.config/wayvnc/config /home/steam/.config/wayvnc/tls.key /home/steam/.config/wayvnc/rsa_key.pem
 chown -R steam:steam /home/steam
-msg_ok "Configured VNC Access"
+msg_ok "Configured Login Access (Browser + VNC)"
 
 msg_custom "🔑" "${GN}" "VNC credentials: steam / ${VNC_PASSWORD}"
 

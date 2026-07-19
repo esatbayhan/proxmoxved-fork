@@ -9,12 +9,12 @@
   "updateable": true,
   "privileged": false,
   "has_arm": false,
-  "interface_port": 5900,
+  "interface_port": 6080,
   "documentation": "https://help.steampowered.com/en/faqs/view/3E3D-BE6B-787D-A5D2",
   "website": "https://store.steampowered.com/streaming/",
   "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/steam.webp",
   "config_path": "/home/steam/.config/sway/config",
-  "description": "Native headless Steam Remote Play host: a GPU-accelerated Steam client running in a virtual Wayland/XWayland session without any physical display. Log in once over VNC, then stream your games to any device running Steam or the Steam Link app on the same network.",
+  "description": "Native headless Steam Remote Play host: a GPU-accelerated Steam client running in a virtual Wayland/XWayland session without any physical display. Log in once in the browser, then stream your games to any device running Steam or the Steam Link app on the same network.",
   "install_methods": [
     {
       "type": "default",
@@ -38,7 +38,7 @@
       "type": "info"
     },
     {
-      "text": "Log in to Steam once with a VeNCrypt-capable VNC client (TigerVNC, Remmina) on port 5900; the generated password is shown at the end of the installation.",
+      "text": "Log in to Steam once at http://<container-ip>:6080/vnc.html (or scan the QR code with the Steam Mobile App); the generated password is shown at the end of the installation. VNC clients and macOS Screen Sharing can use port 5900 instead.",
       "type": "info"
     },
     {
