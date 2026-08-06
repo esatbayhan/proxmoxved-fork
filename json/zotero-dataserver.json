@@ -1,0 +1,54 @@
+{
+  "name": "Zotero-DataServer",
+  "slug": "zotero-dataserver",
+  "categories": [
+    12
+  ],
+  "date_created": "2026-08-06",
+  "type": "ct",
+  "updateable": false,
+  "privileged": false,
+  "has_arm": false,
+  "interface_port": 80,
+  "documentation": "https://github.com/zotero/dataserver",
+  "website": "https://www.zotero.org/",
+  "logo": "https://cdn.jsdelivr.net/gh/selfhst/icons@main/webp/zotero.webp",
+  "config_path": "/opt/dataserver/include/config/config.inc.php",
+  "description": "Self-hosted Zotero sync server (dataserver): the backend that syncs Zotero libraries including items, notes, PDF attachments and annotations. Runs the PHP dataserver with MariaDB, memcached, Valkey, MinIO (S3 attachment storage), the Node.js stream server and the TinyMCE clean server behind nginx. Zotero desktop clients must be repointed at this server with the bundled patch script; a proof-of-concept without an update path, since upstream publishes no releases.",
+  "install_methods": [
+    {
+      "type": "default",
+      "script": "ct/zotero-dataserver.sh",
+      "config_path": "/opt/dataserver/include/config/config.inc.php",
+      "resources": {
+        "cpu": 2,
+        "ram": 4096,
+        "hdd": 10,
+        "os": "Debian",
+        "version": "13"
+      }
+    }
+  ],
+  "default_credentials": {
+    "username": null,
+    "password": null
+  },
+  "notes": [
+    {
+      "text": "Proof of concept: Zotero provides no official selfhosting support and no dataserver releases; this script pins an upstream commit and cannot update in place.",
+      "type": "warning"
+    },
+    {
+      "text": "Zotero desktop clients must be patched to use this server: copy /opt/zotero-dataserver_data/client-patch/ to the client machine and follow its README.",
+      "type": "info"
+    },
+    {
+      "text": "The initial sync account is created during installation; credentials are stored in /root/zotero-dataserver.creds. Server-side full-text search is disabled (no Elasticsearch).",
+      "type": "info"
+    },
+    {
+      "text": "MinIO must stay reachable on port 9000 from all client machines; attachment up/downloads use presigned URLs pointing at it.",
+      "type": "info"
+    }
+  ]
+}
