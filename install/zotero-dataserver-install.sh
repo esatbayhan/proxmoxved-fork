@@ -262,6 +262,12 @@ sed -i "s#^\t'retries' => 2\$#\t'retries' => 2,\n\t'S3' => [\n\t\t'endpoint' => 
 sed -i 's#return "https://" . Z_CONFIG::$S3_BUCKET . ".s3.amazonaws.com/";#return Z_CONFIG::$S3_ENDPOINT . "/" . Z_CONFIG::$S3_BUCKET . "/";#' /opt/dataserver/model/Storage.inc.php
 sed -i "s#'StorageClass' => 'INTELLIGENT_TIERING'#'StorageClass' => 'STANDARD'#" /opt/dataserver/model/Storage.inc.php
 sed -i "s#'StorageClass' => strlen(\$json) < self::\$minFileSizeStandardIA ? 'STANDARD' : 'STANDARD_IA'#'StorageClass' => 'STANDARD'#" /opt/dataserver/model/FullText.inc.php
+# MySQL 8.0.19 row aliases (VALUES ... AS new) are unsupported by MariaDB and break
+# post-upload file registration; rewrite to the portable VALUES() form
+sed -i \
+  -e 's#VALUES (?,?,?,?) AS new$#VALUES (?,?,?,?)#' \
+  -e 's#ON DUPLICATE KEY UPDATE storageFileID=new.storageFileID, mtime=new.mtime, size=new.size#ON DUPLICATE KEY UPDATE storageFileID=VALUES(storageFileID), mtime=VALUES(mtime), size=VALUES(size)#' \
+  /opt/dataserver/model/Storage.inc.php
 gzip -kf /opt/dataserver/htdocs/zotero-schema/schema.json
 msg_ok "Configured Dataserver"
 
