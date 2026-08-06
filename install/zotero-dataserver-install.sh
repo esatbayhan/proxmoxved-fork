@@ -35,6 +35,8 @@ $STD apt install -y \
 msg_ok "Installed Dependencies"
 
 PHP_VERSION="8.4" PHP_FPM="YES" PHP_MODULE="curl,mbstring,memcached,mysql,redis,xml" setup_php
+# Dataserver code opens files with `<?` short tags; PHP defaults to short_open_tag=Off
+echo "short_open_tag = On" >/etc/php/8.4/cli/conf.d/99-zotero-short-tags.ini
 setup_composer
 setup_mariadb
 NODE_VERSION="22" setup_nodejs
