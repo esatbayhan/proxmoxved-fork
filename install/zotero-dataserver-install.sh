@@ -581,44 +581,179 @@ msg_ok "Configured PHP-FPM and nginx"
 
 msg_info "Writing Client Patch Script"
 mkdir -p /opt/zotero-dataserver_data/client-patch
-cat <<'EOF' >/opt/zotero-dataserver_data/client-patch/patch-zotero-client.sh
+cat <<'PATCHEOF' >/opt/zotero-dataserver_data/client-patch/patch-zotero-client.sh
 #!/usr/bin/env bash
-# Repoints an installed Zotero desktop client (Linux) at this self-hosted
-# dataserver by rewriting the URLs in app/omni.ja. Re-run after every
-# Zotero update. Usage: sudo ./patch-zotero-client.sh [zotero-install-dir]
+# Repoint an installed Zotero desktop client at a self-hosted zotero-dataserver by
+# rewriting the sync URLs inside app/omni.ja.
+#
+# Supports the Flathub build (org.zotero.Zotero), tarball installs and distro
+# packages. Re-run after every Zotero update - an update replaces omni.ja.
+#
+# Usage:
+#   ./patch-zotero-client.sh http://192.168.1.50               # auto-detect
+#   ./patch-zotero-client.sh http://192.168.1.50 --dir /usr/lib/zotero
+#   ./patch-zotero-client.sh http://192.168.1.50 --omni ./omni.ja
+#   ./patch-zotero-client.sh --revert
+#
+# Flatpak notes:
+#   * The app lives at <deploy>/files/share/zotero, which is a read-only OSTree
+#     checkout whose files are hardlinked into the flatpak repo. The patched
+#     omni.ja is therefore installed with `cp --remove-destination`, which breaks
+#     the hardlink instead of writing through it into the shared repo object.
+#   * A system-wide install needs sudo; a --user install does not.
+#   * `flatpak update` restores the pristine omni.ja. Pin the version with
+#     `flatpak mask org.zotero.Zotero` (add --user for a user install) if you do
+#     not want to re-patch.
+
 set -euo pipefail
 
-BASE_URL="@@BASE_URL@@"
-ZOTERO_DIR="${1:-/usr/lib/zotero}"
-OMNI="$ZOTERO_DIR/app/omni.ja"
-WORK="$(mktemp -d)"
+FLATPAK_ID="org.zotero.Zotero"
+BACKUP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zotero-selfhost"
+BACKUP_OMNI="$BACKUP_DIR/omni.ja.orig"
+BACKUP_META="$BACKUP_DIR/omni.ja.source"
 
-[[ -f "$OMNI" ]] || { echo "omni.ja not found at $OMNI (pass the Zotero install dir as argument)"; exit 1; }
-if ! command -v zip >/dev/null || ! command -v unzip >/dev/null; then
-  echo "zip and unzip are required"
+die() {
+  printf 'error: %s\n' "$1" >&2
   exit 1
+}
+
+usage() {
+  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
+  exit 64
+}
+
+BASE_URL="@@BASE_URL@@"
+ZOTERO_DIR=""
+OMNI=""
+REVERT=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --revert) REVERT=1; shift ;;
+    --dir) ZOTERO_DIR="${2:-}"; shift 2 ;;
+    --omni) OMNI="${2:-}"; shift 2 ;;
+    -h|--help) usage ;;
+    -*) die "unknown option: $1" ;;
+    *) BASE_URL="$1"; shift ;;
+  esac
+done
+
+for tool in unzip zip; do
+  command -v "$tool" >/dev/null || die "$tool is required"
+done
+
+# Locate omni.ja: explicit path > explicit install dir > flatpak > common prefixes.
+FLATPAK_INSTALL=0
+locate_omni() {
+  [[ -n "$OMNI" ]] && return 0
+
+  if [[ -n "$ZOTERO_DIR" ]]; then
+    OMNI="$ZOTERO_DIR/app/omni.ja"
+    return 0
+  fi
+
+  local loc
+  if command -v flatpak >/dev/null && loc="$(flatpak info --show-location "$FLATPAK_ID" 2>/dev/null)"; then
+    OMNI="$loc/files/share/zotero/app/omni.ja"
+    FLATPAK_INSTALL=1
+    return 0
+  fi
+
+  local dir
+  for dir in /usr/lib/zotero /usr/lib64/zotero /opt/zotero "$HOME/opt/zotero" "$HOME/.local/opt/zotero"; do
+    if [[ -f "$dir/app/omni.ja" ]]; then
+      OMNI="$dir/app/omni.ja"
+      return 0
+    fi
+  done
+
+  die "no Zotero installation found - pass --dir <install dir> or --omni <path>"
+}
+
+# sudo only when the containing directory is not writable (system flatpak, /usr).
+SUDO=""
+need_sudo() {
+  local dir
+  dir="$(dirname "$OMNI")"
+  if [[ ! -w "$dir" ]]; then
+    command -v sudo >/dev/null || die "$dir is not writable and sudo is unavailable"
+    SUDO="sudo"
+  fi
+}
+
+if [[ "$REVERT" == 1 ]]; then
+  [[ -f "$BACKUP_OMNI" ]] || die "no backup at $BACKUP_OMNI"
+  [[ -n "$OMNI" ]] || OMNI="$(cat "$BACKUP_META" 2>/dev/null || true)"
+  [[ -n "$OMNI" ]] || die "backup has no recorded target - pass --omni <path>"
+  need_sudo
+  $SUDO cp --remove-destination "$BACKUP_OMNI" "$OMNI"
+  $SUDO chmod 644 "$OMNI"
+  printf 'restored %s from %s\n' "$OMNI" "$BACKUP_OMNI"
+  exit 0
 fi
 
-if [[ ! -f "$OMNI.bak" ]]; then
-  cp "$OMNI" "$OMNI.bak"
-  echo "Backup: $OMNI.bak"
+[[ -n "$BASE_URL" ]] || usage
+locate_omni
+[[ -f "$OMNI" ]] || die "omni.ja not found at $OMNI"
+
+BASE_URL="${BASE_URL%/}"
+[[ "$BASE_URL" == http://* || "$BASE_URL" == https://* ]] || die "base URL must start with http:// or https://"
+HOST="${BASE_URL#*://}"
+WS_SCHEME="ws"
+[[ "$BASE_URL" == https://* ]] && WS_SCHEME="wss"
+
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+# omni.ja is a Mozilla-"optimized" zip; unzip reports a warning (exit 1) but
+# extracts correctly. Only exit codes > 1 are real failures.
+set +e
+unzip -q "$OMNI" -d "$WORK/omni"
+rc=$?
+set -e
+(( rc <= 1 )) || die "unzip failed (exit $rc)"
+
+CONFIG="$WORK/omni/resource/config.mjs"
+[[ -f "$CONFIG" ]] || CONFIG="$WORK/omni/resource/config.js"
+[[ -f "$CONFIG" ]] || die "resource/config.mjs or resource/config.js not found inside omni.ja"
+
+sed -i \
+  -e "s#BASE_URI: '[^']*'#BASE_URI: '${BASE_URL}/'#" \
+  -e "s#WWW_BASE_URL: '[^']*'#WWW_BASE_URL: '${BASE_URL}/'#" \
+  -e "s#API_URL: '[^']*'#API_URL: '${BASE_URL}/api/'#" \
+  -e "s#STREAMING_URL: '[^']*'#STREAMING_URL: '${WS_SCHEME}://${HOST}/stream'#" \
+  "$CONFIG"
+
+grep -q "API_URL: '${BASE_URL}/api/'" "$CONFIG" || die "patching $CONFIG failed - config format changed?"
+
+( cd "$WORK/omni" && zip -qr9XD "$WORK/omni.ja" . )
+
+mkdir -p "$BACKUP_DIR"
+if [[ ! -f "$BACKUP_OMNI" ]]; then
+  cp "$OMNI" "$BACKUP_OMNI"
+  printf '%s\n' "$OMNI" >"$BACKUP_META"
+  printf 'backup: %s\n' "$BACKUP_OMNI"
 fi
-unzip -q "$OMNI" -d "$WORK"
 
-CONFIG="$WORK/resource/config.js"
-[[ -f "$CONFIG" ]] || CONFIG="$WORK/resource/config.mjs"
-[[ -f "$CONFIG" ]] || { echo "config.js/config.mjs not found inside omni.ja"; exit 1; }
+need_sudo
+$SUDO cp --remove-destination "$WORK/omni.ja" "$OMNI"
+$SUDO chmod 644 "$OMNI"
 
-sed -i "s#BASE_URI: '[^']*'#BASE_URI: '${BASE_URL}/'#" "$CONFIG"
-sed -i "s#WWW_BASE_URL: '[^']*'#WWW_BASE_URL: '${BASE_URL}/'#" "$CONFIG"
-sed -i "s#API_URL: '[^']*'#API_URL: '${BASE_URL}/api/'#" "$CONFIG"
-sed -i "s#STREAMING_URL: '[^']*'#STREAMING_URL: 'ws://${BASE_URL#http://}/stream'#" "$CONFIG"
+printf 'patched %s\n' "$OMNI"
+sed -n "/BASE_URI:/p;/WWW_BASE_URL:/p;/API_URL:/p;/STREAMING_URL:/p" "$CONFIG"
 
-( cd "$WORK" && zip -qr "$OMNI" . )
-rm -rf "$WORK"
-echo "Patched $CONFIG -> $BASE_URL"
-echo "Start Zotero once with: zotero -purgecaches"
+if [[ "$FLATPAK_INSTALL" == 1 ]]; then
+  cat <<EOF
+
+Next steps (flatpak):
+  flatpak run $FLATPAK_ID -purgecaches
+  # optional, keeps updates from reverting the patch:
+  flatpak mask $FLATPAK_ID
 EOF
+else
+  printf '\nNext step: start Zotero once with "zotero -purgecaches"\n'
+fi
+PATCHEOF
 sed -i "s|@@BASE_URL@@|${BASE_URL}|" /opt/zotero-dataserver_data/client-patch/patch-zotero-client.sh
 chmod +x /opt/zotero-dataserver_data/client-patch/patch-zotero-client.sh
 
@@ -627,14 +762,25 @@ Zotero self-hosted sync: client setup
 =====================================
 
 1. Copy patch-zotero-client.sh to the machine with the Zotero desktop client.
-2. Run: sudo ./patch-zotero-client.sh   (default install dir /usr/lib/zotero;
-   pass the directory as argument for tarball installs)
-3. Start Zotero once with: zotero -purgecaches
+2. Run it there:
+     ./patch-zotero-client.sh                  # auto-detects flatpak or a local install
+     ./patch-zotero-client.sh --dir /usr/lib/zotero
+   The server URL (${BASE_URL}) is already baked in; sudo is used automatically
+   when the install directory is not writable.
+3. Restart Zotero once with purged caches:
+     flatpak run org.zotero.Zotero -purgecaches      # flatpak install
+     zotero -purgecaches                             # tarball/distro install
 4. In Zotero: Settings -> Sync -> Sign in. A browser window opens at
    ${BASE_URL}/login - sign in with the account from
    /root/zotero-dataserver.creds on the server.
 
-Re-run the patch script after every Zotero update.
+Re-run the patch script after every Zotero update (an update restores the
+original omni.ja). For flatpak, "flatpak mask org.zotero.Zotero" pins the
+current version. "./patch-zotero-client.sh --revert" undoes the patch.
+
+Test against a throwaway library instead of your real one:
+  flatpak run org.zotero.Zotero -profile ~/zotero-poc/profile -datadir ~/zotero-poc/data
+
 Fallback without the login page: create an API key via
   curl -X POST ${BASE_URL}/api/keys -H 'Zotero-API-Version: 3' \\
     -d '{"username":"...","password":"...","name":"manual","access":{"user":{"library":true,"notes":true,"write":true,"files":true}}}'
