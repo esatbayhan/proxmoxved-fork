@@ -15,6 +15,9 @@ update_os
 
 # Upstream publishes no releases; pin the audited dataserver commit (2026-08-02).
 DATASERVER_COMMIT="5cf550f3166e848981a8ec60696ae3a6a5d82bc7"
+# Zend Framework 1 is not in the dataserver's composer.json; upstream drops it into
+# include/Zend/ out of band. Use the maintained PHP 8-compatible ZF1 fork instead.
+ZF1_VERSION="1.25.0"
 
 SYNC_USER="zotero"
 SYNC_PASS="$(openssl rand -hex 12)"
@@ -95,6 +98,13 @@ export COMPOSER_ALLOW_SUPERUSER=1
 $STD composer install --no-dev --no-interaction
 mkdir -p /opt/dataserver/tmp /var/log/zotero
 msg_ok "Installed Dataserver Dependencies"
+
+msg_info "Setting up Zend Framework 1"
+fetch_and_deploy_from_url "https://github.com/Shardj/zf1-future/archive/refs/tags/release-${ZF1_VERSION}.tar.gz" "/opt/zf1-future"
+rm -rf /opt/dataserver/include/Zend
+mv /opt/zf1-future/library/Zend /opt/dataserver/include/Zend
+rm -rf /opt/zf1-future
+msg_ok "Setup Zend Framework 1"
 
 msg_info "Configuring Dataserver"
 cat <<EOF >/opt/dataserver/include/config/config.inc.php
