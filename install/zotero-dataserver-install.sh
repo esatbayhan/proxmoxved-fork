@@ -15,8 +15,13 @@ update_os
 
 # Upstream publishes no releases; pin the audited dataserver commit (2026-08-02).
 DATASERVER_COMMIT="5cf550f3166e848981a8ec60696ae3a6a5d82bc7"
-# Zend Framework 1 is not in the dataserver's composer.json; upstream drops it into
-# include/Zend/ out of band. Use the maintained PHP 8-compatible ZF1 fork instead.
+# include/DB.inc.php requires Zend_Db and subclasses Zend_Db_Statement_Mysqli, but ZF1 is
+# absent from the dataserver's composer.json: upstream drops it into include/Zend/ during
+# their image build (the repo used to carry an ignore-everything .gitignore there).
+# Official ZF1 reached EOL on 2016-09-28 (archived, last release 1.12.20, requires PHP
+# >=5.2.11) and Laminas continues ZF2/ZF3 only, with an incompatible Laminas\Db API - while
+# the dataserver's own composer.lock (symfony/cache v8) forces PHP 8.4. Shardj/zf1-future
+# is the maintained ZF1 continuation and the only option that runs on a supported PHP.
 ZF1_VERSION="1.25.0"
 
 SYNC_USER="zotero"
@@ -99,8 +104,10 @@ $STD composer install --no-dev --no-interaction
 mkdir -p /opt/dataserver/tmp /var/log/zotero
 msg_ok "Installed Dataserver Dependencies"
 
-msg_info "Setting up Zend Framework 1"
-fetch_and_deploy_from_url "https://github.com/Shardj/zf1-future/archive/refs/tags/release-${ZF1_VERSION}.tar.gz" "/opt/zf1-future"
+msg_info "Setup Zend Framework 1"
+fetch_and_deploy_gh_release "zf1-future" "Shardj/zf1-future" "tarball" "release-${ZF1_VERSION}" "/opt/zf1-future"
+# admin/* CLI scripts call set_include_path("../include"), discarding any php.ini value, so
+# the library has to live at include/Zend - the path upstream expects and the FPM pool sets.
 rm -rf /opt/dataserver/include/Zend
 mv /opt/zf1-future/library/Zend /opt/dataserver/include/Zend
 rm -rf /opt/zf1-future
