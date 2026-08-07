@@ -16,10 +16,11 @@ update_os
 # Upstream zotero/dataserver publishes no releases and needs patches plus dependencies it
 # injects at image-build time, so the deployable artifact is built out-of-band. The release
 # ships the patched source, Zend Framework 1 at include/Zend, the composer vendor tree and
-# the item schema — plus the two Node services as separate assets, repacked at their pinned
-# commits because those repos publish no releases either, and the web library (the browser
-# client) as a prebuilt static bundle. Every upstream pin lives in the build repo's
-# upstream.env; this script always deploys the latest release.
+# the item schema — plus the three Node services as separate assets, repacked at their
+# pinned commits because those repos publish no releases either (the attachment proxy with
+# its own patch series applied), and the web library (the browser client) as a prebuilt
+# static bundle. Every upstream pin lives in the build repo's upstream.env; this script
+# always deploys the latest release.
 SELFHOSTED_REPO="esatbayhan/zotero-selfhosted"
 
 # The web library installs by default and is served login-gated at /.
@@ -35,6 +36,7 @@ SUPER_USER="superuser"
 SUPER_PASS="$(openssl rand -hex 16)"
 MINIO_USER="zotero-minio"
 MINIO_PASS="$(openssl rand -hex 16)"
+ATTACHMENT_PROXY_SECRET="$(openssl rand -hex 16)"
 BASE_URL="http://${LOCAL_IP}"
 
 msg_info "Installing Dependencies"
@@ -70,6 +72,7 @@ msg_ok "Configured MariaDB"
 fetch_and_deploy_gh_release "zotero-dataserver" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/dataserver" "zotero-dataserver.tar.gz"
 fetch_and_deploy_gh_release "zotero-stream-server" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/stream-server" "stream-server.tar.gz"
 fetch_and_deploy_gh_release "zotero-htmlclean" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/tinymce-clean-server" "tinymce-clean-server.tar.gz"
+fetch_and_deploy_gh_release "zotero-attachment-proxy" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/attachment-proxy" "attachment-proxy.tar.gz"
 if [[ "$ZOTERO_WEB_LIBRARY" != "no" ]]; then
   fetch_and_deploy_gh_release "zotero-web-library" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/zotero-web-library" "web-library.tar.gz"
 fi
@@ -165,8 +168,11 @@ class Z_CONFIG {
 
 	public static \$GLOBAL_ITEMS_URL = '';
 
-	public static \$ATTACHMENT_PROXY_URL = "";
-	public static \$ATTACHMENT_PROXY_SECRET = "";
+	// Signed file-view URLs (the web library's reader opens attachments through
+	// them) are served by the attachment proxy behind /attachment-proxy/ on this
+	// origin. Single-quoted so zotero-set-url can rewrite the URL on a move.
+	public static \$ATTACHMENT_PROXY_URL = '${BASE_URL}/attachment-proxy/';
+	public static \$ATTACHMENT_PROXY_SECRET = '${ATTACHMENT_PROXY_SECRET}';
 
 	public static \$TTS_TABLE = "TTS";
 	public static \$S3_BUCKET_TTS = 'tts-cache';
@@ -410,6 +416,61 @@ chown -R www-data:www-data /opt/stream-server /opt/tinymce-clean-server
 systemctl enable -q --now zotero-stream-server zotero-htmlclean
 msg_ok "Configured HTML Clean Server"
 
+msg_info "Configuring Attachment Proxy"
+# Serves the signed file-view URLs the dataserver hands out (the web library's
+# reader opens attachments through them): streams files from MinIO with the
+# right content type and mounts zipped snapshots. Same-origin behind nginx, so
+# no CORS or extra port is involved; the secret must match the dataserver's
+# $ATTACHMENT_PROXY_SECRET.
+cd /opt/attachment-proxy
+cat <<EOF >/opt/attachment-proxy/config/default.js
+module.exports = {
+	logLevel: 'info',
+	logFile: '',
+	port: 16343,
+	s3: {
+		bucket: 'zotero',
+		region: 'us-east-1',
+		endpoint: 'http://127.0.0.1:9000',
+		accessKeyId: '${MINIO_USER}',
+		secretAccessKey: '${MINIO_PASS}',
+	},
+	secret: '${ATTACHMENT_PROXY_SECRET}',
+	// Matches the nginx location and the path in \$ATTACHMENT_PROXY_URL. The
+	// prefix must reach this service unstripped (base64 payloads can contain
+	// %2F), which is why nginx proxies the raw URI - see the vhost.
+	routePrefix: '/attachment-proxy',
+	zipCacheTime: 60,
+	zipMaxFiles: 1000,
+	zipMaxFileSize: 128 * 1024 * 1024,
+	tmpDir: './tmp/',
+	connectionTimeout: 30,
+	trustedProxies: ['127.0.0.1'],
+};
+EOF
+mkdir -p /opt/attachment-proxy/tmp
+$STD npm install
+
+cat <<EOF >/etc/systemd/system/zotero-attachment-proxy.service
+[Unit]
+Description=Zotero attachment proxy
+After=network-online.target minio.service
+
+[Service]
+WorkingDirectory=/opt/attachment-proxy
+ExecStart=/usr/bin/npm start
+Restart=always
+User=www-data
+Group=www-data
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
+EOF
+chown -R www-data:www-data /opt/attachment-proxy
+systemctl enable -q --now zotero-attachment-proxy
+msg_ok "Configured Attachment Proxy"
+
 msg_info "Configuring Login Page and Admin Tools"
 # All three ship in the release under selfhosted/. The login page reads the dataserver
 # config at runtime, so the shipped file deploys verbatim; the pristine copy lets
@@ -531,6 +592,16 @@ server {
         proxy_read_timeout 3600;
     }
 
+    # No URI part on proxy_pass: the payload path segment of the signed URLs is
+    # base64 and can contain %2F, which nginx would decode into a path separator
+    # when rewriting the URI. The raw request URI must reach the proxy
+    # unmodified; it matches the /attachment-proxy prefix itself (routePrefix).
+    location /attachment-proxy/ {
+        proxy_pass http://127.0.0.1:16343;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300;
+    }
+
     location = /login {
         include fastcgi_params;
         fastcgi_pass unix:/run/php/php8.4-fpm.sock;
@@ -634,6 +705,13 @@ if [[ -n "$API_KEY" ]] && curl -fsS -o /dev/null -H "Zotero-API-Key: $API_KEY" -
   msg_ok "Smoke Test Passed (API key created, item list readable)"
 else
   msg_error "Smoke test failed - check /var/log/zotero and journalctl -u nginx -u php8.4-fpm"
+fi
+# The attachment proxy answers an empty 200 on its root; through nginx this
+# also proves the /attachment-proxy/ location reaches it.
+if curl -fsS -o /dev/null http://127.0.0.1/attachment-proxy/; then
+  msg_ok "Attachment Proxy Up"
+else
+  msg_error "Attachment proxy not answering - check journalctl -u zotero-attachment-proxy"
 fi
 if [[ "$ZOTERO_WEB_LIBRARY" != "no" ]]; then
   # Unauthenticated, the gate must answer 401 with the login form - anything
