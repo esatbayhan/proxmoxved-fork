@@ -17,9 +17,14 @@ update_os
 # injects at image-build time, so the deployable artifact is built out-of-band. The release
 # ships the patched source, Zend Framework 1 at include/Zend, the composer vendor tree and
 # the item schema — plus the two Node services as separate assets, repacked at their pinned
-# commits because those repos publish no releases either. Every upstream pin lives in the
-# build repo's upstream.env; this script always deploys the latest release.
+# commits because those repos publish no releases either, and the web library (the browser
+# client) as a prebuilt static bundle. Every upstream pin lives in the build repo's
+# upstream.env; this script always deploys the latest release.
 SELFHOSTED_REPO="esatbayhan/zotero-selfhosted"
+
+# The web library installs by default and is served login-gated at /.
+# Set ZOTERO_WEB_LIBRARY=no in the environment at install time to skip it.
+ZOTERO_WEB_LIBRARY="${ZOTERO_WEB_LIBRARY:-yes}"
 
 SYNC_USER="zotero"
 SYNC_PASS="$(openssl rand -hex 12)"
@@ -65,6 +70,9 @@ msg_ok "Configured MariaDB"
 fetch_and_deploy_gh_release "zotero-dataserver" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/dataserver" "zotero-dataserver.tar.gz"
 fetch_and_deploy_gh_release "zotero-stream-server" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/stream-server" "stream-server.tar.gz"
 fetch_and_deploy_gh_release "zotero-htmlclean" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/tinymce-clean-server" "tinymce-clean-server.tar.gz"
+if [[ "$ZOTERO_WEB_LIBRARY" != "no" ]]; then
+  fetch_and_deploy_gh_release "zotero-web-library" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/zotero-web-library" "web-library.tar.gz"
+fi
 
 msg_info "Setting up MinIO"
 curl -fsSL -o /usr/local/bin/minio "https://dl.min.io/server/minio/release/linux-amd64/minio"
@@ -81,6 +89,10 @@ After=network-online.target
 [Service]
 Environment=MINIO_ROOT_USER=${MINIO_USER}
 Environment=MINIO_ROOT_PASSWORD=${MINIO_PASS}
+# The web library's reader fetches attachments per XHR from the presigned URLs
+# the dataserver redirects to, which is cross-origin (different port). '*' is
+# MinIO's default; pinned here so a MinIO default change cannot break it.
+Environment=MINIO_API_CORS_ALLOW_ORIGIN=*
 ExecStart=/usr/local/bin/minio server --address :9000 /opt/zotero-dataserver_data/minio
 Restart=always
 LimitNOFILE=65536
@@ -409,6 +421,39 @@ chown -R www-data:www-data /opt/zotero-login
 install -m 0755 /opt/dataserver/selfhosted/zotero-create-user /usr/local/bin/zotero-create-user
 msg_ok "Configured Login Page and Account Tool"
 
+if [[ "$ZOTERO_WEB_LIBRARY" != "no" ]]; then
+  msg_info "Configuring Web Library"
+  # Same conffile treatment as the login page: the gate reads the dataserver
+  # config at runtime and is meant to be adapted; updates replace only a
+  # pristine copy. The static bundle in /opt/zotero-web-library holds no
+  # configuration and is redeployed wholesale.
+  mkdir -p /opt/zotero-web
+  cp /opt/dataserver/selfhosted/web/index.php /opt/zotero-web/index.php
+  cp /opt/dataserver/selfhosted/web/index.php /opt/zotero-web/.index.php.orig
+  chown -R www-data:www-data /opt/zotero-web /opt/zotero-web-library
+
+  # Dropped in as a snippet the main vhost includes via a glob, so the vhost
+  # stays identical with and without the web library installed.
+  cat <<'EOF' >/etc/nginx/snippets/zotero-web-library.conf
+location /static/web-library/ {
+    root /opt/zotero-web-library;
+    # Bundle filenames are not content-hashed; force revalidation so a release
+    # update is picked up immediately (unchanged assets still answer 304).
+    add_header Cache-Control "no-cache";
+}
+
+# Every remaining path is an SPA route; the gate serves the entry page - or a
+# login form - for all of them. The /api/, /stream and /login locations above
+# take precedence (longer prefix respectively exact match).
+location / {
+    include fastcgi_params;
+    fastcgi_pass unix:/run/php/php8.4-fpm.sock;
+    fastcgi_param SCRIPT_FILENAME /opt/zotero-web/index.php;
+}
+EOF
+  msg_ok "Configured Web Library"
+fi
+
 msg_info "Configuring PHP-FPM and nginx"
 cat <<'EOF' >/etc/php/8.4/fpm/pool.d/zotero.conf
 [zotero]
@@ -482,6 +527,10 @@ server {
         fastcgi_pass unix:/run/php/php8.4-fpm.sock;
         fastcgi_param SCRIPT_FILENAME /opt/zotero-login/index.php;
     }
+
+    # Web library (optional). The glob makes a missing snippet a no-op: without
+    # it, / simply stays 404 as before.
+    include /etc/nginx/snippets/zotero-web-library[.]conf;
 }
 EOF
 ln -sf /etc/nginx/sites-available/zotero-dataserver /etc/nginx/sites-enabled/zotero-dataserver
@@ -524,6 +573,9 @@ Test against a throwaway library instead of your real one:
 Additional accounts: run "zotero-create-user <username>" on the server.
 There is deliberately no self-service registration.
 
+Web library (browser client, EPUB/PDF reader included): ${BASE_URL}/ -
+sign in with the same account. No client patching needed.
+
 HTTPS: terminate TLS in a reverse proxy of your choice in front of this
 container, then update the URLs in
 /opt/dataserver/include/config/config.inc.php and re-run the client patch
@@ -550,6 +602,9 @@ MinIO root (${MINIO_USER}): ${MINIO_PASS}  Endpoint: http://${LOCAL_IP}:9000
 
 Additional accounts: zotero-create-user <username>
 EOF
+if [[ "$ZOTERO_WEB_LIBRARY" != "no" ]]; then
+  echo "Web library: ${BASE_URL}/ (sign in with the sync account)" >>/root/zotero-dataserver.creds
+fi
 chmod 600 /root/zotero-dataserver.creds
 msg_ok "Stored Credentials in /root/zotero-dataserver.creds"
 
@@ -562,6 +617,17 @@ if [[ -n "$API_KEY" ]] && curl -fsS -o /dev/null -H "Zotero-API-Key: $API_KEY" -
   msg_ok "Smoke Test Passed (API key created, item list readable)"
 else
   msg_error "Smoke test failed - check /var/log/zotero and journalctl -u nginx -u php8.4-fpm"
+fi
+if [[ "$ZOTERO_WEB_LIBRARY" != "no" ]]; then
+  # Unauthenticated, the gate must answer 401 with the login form - anything
+  # else means the web library is reachable without a login or not at all.
+  if curl -fsS -o /dev/null -w '' http://127.0.0.1/ 2>/dev/null; then
+    msg_error "Web library gate answered 200 without a login - check /opt/zotero-web/index.php"
+  elif [[ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1/)" == "401" ]]; then
+    msg_ok "Web Library Gate Up (login required)"
+  else
+    msg_error "Web library gate not answering - check journalctl -u nginx -u php8.4-fpm"
+  fi
 fi
 
 motd_ssh

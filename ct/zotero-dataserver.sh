@@ -77,6 +77,31 @@ function update_script() {
   fi
   install -m 0755 /opt/dataserver/selfhosted/zotero-create-user /usr/local/bin/zotero-create-user
 
+  # The web library updates only where it is installed: the nginx vhost is
+  # admin-owned territory after install, so retrofitting the feature onto an
+  # older container would mean editing a config this script must not touch.
+  if [[ -d /opt/zotero-web-library ]]; then
+    fetch_and_deploy_gh_release "zotero-web-library" "esatbayhan/zotero-selfhosted" "prebuild" "latest" "/opt/zotero-web-library" "web-library.tar.gz"
+    chown -R www-data:www-data /opt/zotero-web-library
+
+    # Same conffile dance as the login page: the gate is meant to be adapted.
+    msg_info "Updating Web Library Gate"
+    mkdir -p /opt/zotero-web
+    if [[ -f /opt/zotero-web/.index.php.orig ]] && ! cmp -s /opt/zotero-web/index.php /opt/zotero-web/.index.php.orig; then
+      cp /opt/dataserver/selfhosted/web/index.php /opt/zotero-web/index.php.new
+      cp /opt/dataserver/selfhosted/web/index.php /opt/zotero-web/.index.php.orig
+      chown www-data:www-data /opt/zotero-web/index.php.new /opt/zotero-web/.index.php.orig
+      msg_ok "Web library gate is locally modified - shipped version saved as /opt/zotero-web/index.php.new"
+    else
+      cp /opt/dataserver/selfhosted/web/index.php /opt/zotero-web/index.php
+      cp /opt/dataserver/selfhosted/web/index.php /opt/zotero-web/.index.php.orig
+      chown -R www-data:www-data /opt/zotero-web
+      msg_ok "Updated Web Library Gate"
+    fi
+  else
+    echo -e "${INFO}${YW}Web library not installed (older install or opted out) - a reinstall adds it; see the zotero-selfhosted README to add it by hand.${CL}"
+  fi
+
   fetch_and_deploy_gh_release "zotero-stream-server" "esatbayhan/zotero-selfhosted" "prebuild" "latest" "/opt/stream-server" "stream-server.tar.gz"
   fetch_and_deploy_gh_release "zotero-htmlclean" "esatbayhan/zotero-selfhosted" "prebuild" "latest" "/opt/tinymce-clean-server" "tinymce-clean-server.tar.gz"
 
@@ -119,4 +144,6 @@ msg_ok "Completed Successfully!\n"
 echo -e "${CREATING}${GN}${APP} setup has been successfully initialized!${CL}"
 echo -e "${INFO}${YW}Zotero API endpoint:${CL}"
 echo -e "${GATEWAY}${BGN}http://${IP}/api/${CL}"
+echo -e "${INFO}${YW}Web library (browser client):${CL}"
+echo -e "${GATEWAY}${BGN}http://${IP}/${CL}"
 echo -e "${INFO}${YW}Patch your Zotero desktop client with the script in /opt/zotero-dataserver_data/client-patch/ (see /opt/zotero-dataserver_data/client-patch/README).${CL}"
