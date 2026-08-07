@@ -52,6 +52,31 @@ function update_script() {
   chown -R www-data:www-data /opt/dataserver
   msg_ok "Restored Configuration"
 
+  # The login page ships in the release but is meant to be adapted by the admin
+  # (branding, forward auth). Replace it only while it is still the pristine
+  # shipped copy; otherwise land the new version next to it for manual merging.
+  msg_info "Updating Login Page and Account Tool"
+  # The page requires the dataserver config files, which use `<?` short tags;
+  # installs from before the release-shipped page lack this FPM override.
+  echo "short_open_tag = On" >/etc/php/8.4/fpm/conf.d/99-zotero-short-tags.ini
+  mkdir -p /opt/zotero-login
+  if [[ -f /opt/zotero-login/.index.php.orig ]] && ! cmp -s /opt/zotero-login/index.php /opt/zotero-login/.index.php.orig; then
+    cp /opt/dataserver/selfhosted/login/index.php /opt/zotero-login/index.php.new
+    cp /opt/dataserver/selfhosted/login/index.php /opt/zotero-login/.index.php.orig
+    chown www-data:www-data /opt/zotero-login/index.php.new /opt/zotero-login/.index.php.orig
+    msg_ok "Login page is locally modified - shipped version saved as /opt/zotero-login/index.php.new"
+  else
+    if [[ -f /opt/zotero-login/index.php && ! -f /opt/zotero-login/.index.php.orig ]]; then
+      # Install predates the release-shipped page; keep the generated one around once.
+      cp -a /opt/zotero-login/index.php /opt/zotero-login/index.php.bak
+    fi
+    cp /opt/dataserver/selfhosted/login/index.php /opt/zotero-login/index.php
+    cp /opt/dataserver/selfhosted/login/index.php /opt/zotero-login/.index.php.orig
+    chown -R www-data:www-data /opt/zotero-login
+    msg_ok "Updated Login Page"
+  fi
+  install -m 0755 /opt/dataserver/selfhosted/zotero-create-user /usr/local/bin/zotero-create-user
+
   fetch_and_deploy_gh_release "zotero-stream-server" "esatbayhan/zotero-selfhosted" "prebuild" "latest" "/opt/stream-server" "stream-server.tar.gz"
   fetch_and_deploy_gh_release "zotero-htmlclean" "esatbayhan/zotero-selfhosted" "prebuild" "latest" "/opt/tinymce-clean-server" "tinymce-clean-server.tar.gz"
 

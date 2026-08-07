@@ -40,8 +40,10 @@ $STD apt install -y \
 msg_ok "Installed Dependencies"
 
 PHP_VERSION="8.4" PHP_FPM="YES" PHP_MODULE="curl,mbstring,memcached,mysql,redis,xml" setup_php
-# Dataserver code opens files with `<?` short tags; PHP defaults to short_open_tag=Off
+# Dataserver code (including its config files, which the login page requires via the
+# default FPM pool) opens files with `<?` short tags; PHP defaults to short_open_tag=Off
 echo "short_open_tag = On" >/etc/php/8.4/cli/conf.d/99-zotero-short-tags.ini
+echo "short_open_tag = On" >/etc/php/8.4/fpm/conf.d/99-zotero-short-tags.ini
 # No composer here: the release ships a vendor/ tree resolved against the same PHP version.
 setup_mariadb
 NODE_VERSION="22" setup_nodejs
@@ -396,85 +398,16 @@ chown -R www-data:www-data /opt/stream-server /opt/tinymce-clean-server
 systemctl enable -q --now zotero-stream-server zotero-htmlclean
 msg_ok "Configured HTML Clean Server"
 
-msg_info "Configuring Login Page"
+msg_info "Configuring Login Page and Account Tool"
+# Both ship in the release under selfhosted/. The login page reads the dataserver
+# config at runtime, so the shipped file deploys verbatim; the pristine copy lets
+# the update script distinguish local admin modifications from the shipped state.
 mkdir -p /opt/zotero-login
-cat <<'EOF' >/opt/zotero-login/index.php
-<?php
-// Minimal login page for the Zotero client login-session flow:
-// the client POSTs /keys/sessions, opens this page in a browser, and
-// polls the session until it is completed with an API key.
-const DB_USER = '@@DB_USER@@';
-const DB_PASS = '@@DB_PASS@@';
-const SUPER_AUTH = '@@SUPER_AUTH@@';
-const API_INTERNAL = 'http://127.0.0.1:8080';
-
-$session = $_GET['session'] ?? $_POST['session'] ?? '';
-$error = '';
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $session !== '') {
-    $mysqli = new mysqli('localhost', DB_USER, DB_PASS, 'zotero_www');
-    $stmt = $mysqli->prepare('SELECT userID, password FROM users WHERE username = ? AND role = "normal"');
-    $stmt->bind_param('s', $_POST['username']);
-    $stmt->execute();
-    $row = $stmt->get_result()->fetch_assoc();
-
-    if ($row && password_verify($_POST['password'] ?? '', $row['password'])) {
-        $body = json_encode([
-            'sessionToken' => $session,
-            'userID' => (int) $row['userID'],
-            'access' => [
-                'user' => ['library' => true, 'notes' => true, 'write' => true, 'files' => true],
-                'groups' => ['all' => ['library' => true, 'write' => true]]
-            ]
-        ]);
-        $ch = curl_init(API_INTERNAL . '/keys/sessions/complete');
-        curl_setopt_array($ch, [
-            CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => $body,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_HTTPHEADER => [
-                'Authorization: Basic ' . SUPER_AUTH,
-                'Zotero-API-Version: 3',
-                'Content-Type: application/json'
-            ]
-        ]);
-        curl_exec($ch);
-        $status = curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        curl_close($ch);
-
-        if ($status === 204) {
-            echo '<!doctype html><meta charset="utf-8"><title>Zotero Login</title>'
-                . '<h1>Login successful</h1><p>You can close this window and return to Zotero.</p>';
-            exit;
-        }
-        $error = "Could not complete login session (HTTP $status). The session may have expired; retry from Zotero.";
-    } else {
-        $error = 'Invalid username or password.';
-    }
-}
-?>
-<!doctype html>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Zotero Login</title>
-<style>body{font-family:sans-serif;max-width:22rem;margin:4rem auto}input{width:100%;margin:.25rem 0 .75rem;padding:.5rem}button{padding:.5rem 1.5rem}.err{color:#b00}</style>
-<h1>Sign in to Zotero</h1>
-<?php if ($session === ''): ?>
-<p class="err">Missing login session token. Start the login from the Zotero client (Settings &rarr; Sync).</p>
-<?php else: ?>
-<?php if ($error !== ''): ?><p class="err"><?= htmlspecialchars($error) ?></p><?php endif; ?>
-<form method="post">
-  <input type="hidden" name="session" value="<?= htmlspecialchars($session) ?>">
-  <label>Username<input name="username" autofocus></label>
-  <label>Password<input name="password" type="password"></label>
-  <button>Sign in</button>
-</form>
-<?php endif; ?>
-EOF
-SUPER_AUTH="$(printf '%s:%s' "${SUPER_USER}" "${SUPER_PASS}" | base64 -w0)"
-sed -i -e "s|@@DB_USER@@|${DB_USER}|" -e "s|@@DB_PASS@@|${DB_PASS}|" -e "s|@@SUPER_AUTH@@|${SUPER_AUTH}|" /opt/zotero-login/index.php
+cp /opt/dataserver/selfhosted/login/index.php /opt/zotero-login/index.php
+cp /opt/dataserver/selfhosted/login/index.php /opt/zotero-login/.index.php.orig
 chown -R www-data:www-data /opt/zotero-login
-msg_ok "Configured Login Page"
+install -m 0755 /opt/dataserver/selfhosted/zotero-create-user /usr/local/bin/zotero-create-user
+msg_ok "Configured Login Page and Account Tool"
 
 msg_info "Configuring PHP-FPM and nginx"
 cat <<'EOF' >/etc/php/8.4/fpm/pool.d/zotero.conf
@@ -588,6 +521,14 @@ current version. "./patch-zotero-client.sh --revert" undoes the patch.
 Test against a throwaway library instead of your real one:
   flatpak run org.zotero.Zotero -profile ~/zotero-poc/profile -datadir ~/zotero-poc/data
 
+Additional accounts: run "zotero-create-user <username>" on the server.
+There is deliberately no self-service registration.
+
+HTTPS: terminate TLS in a reverse proxy of your choice in front of this
+container, then update the URLs in
+/opt/dataserver/include/config/config.inc.php and re-run the client patch
+script with the new https:// URL.
+
 Fallback without the login page: create an API key via
   curl -X POST ${BASE_URL}/api/keys -H 'Zotero-API-Version: 3' \\
     -d '{"username":"...","password":"...","name":"manual","access":{"user":{"library":true,"notes":true,"write":true,"files":true}}}'
@@ -606,6 +547,8 @@ Zotero sync account
 API super user (internal): ${SUPER_USER} / ${SUPER_PASS}
 MariaDB (${DB_USER}): ${DB_PASS}
 MinIO root (${MINIO_USER}): ${MINIO_PASS}  Endpoint: http://${LOCAL_IP}:9000
+
+Additional accounts: zotero-create-user <username>
 EOF
 chmod 600 /root/zotero-dataserver.creds
 msg_ok "Stored Credentials in /root/zotero-dataserver.creds"
