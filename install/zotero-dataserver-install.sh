@@ -13,16 +13,15 @@ setting_up_container
 network_check
 update_os
 
-# Upstream publishes no releases; pin the audited dataserver commit (2026-08-02).
-DATASERVER_COMMIT="5cf550f3166e848981a8ec60696ae3a6a5d82bc7"
-# include/DB.inc.php requires Zend_Db and subclasses Zend_Db_Statement_Mysqli, but ZF1 is
-# absent from the dataserver's composer.json: upstream drops it into include/Zend/ during
-# their image build (the repo used to carry an ignore-everything .gitignore there).
-# Official ZF1 reached EOL on 2016-09-28 (archived, last release 1.12.20, requires PHP
-# >=5.2.11) and Laminas continues ZF2/ZF3 only, with an incompatible Laminas\Db API - while
-# the dataserver's own composer.lock (symfony/cache v8) forces PHP 8.4. Shardj/zf1-future
-# is the maintained ZF1 continuation and the only option that runs on a supported PHP.
-ZF1_VERSION="1.25.0"
+# Upstream zotero/dataserver publishes no releases and needs patches plus dependencies it
+# injects at image-build time, so the deployable artifact is built out-of-band. The release
+# ships the patched source, Zend Framework 1 at include/Zend, the composer vendor tree and
+# the item schema. Its patch series and pins are documented in the build repo.
+SELFHOSTED_REPO="esatbayhan/zotero-selfhosted"
+# Node services, still fetched from upstream. Pinned because these repos have no releases
+# either and master is a moving target.
+STREAM_SERVER_COMMIT="55cb51c85f6787261d878529aaa440cbc08b8f15"
+HTMLCLEAN_COMMIT="5be2a0d367133b728872bee9975beed1c9e74898"
 
 SYNC_USER="zotero"
 SYNC_PASS="$(openssl rand -hex 12)"
@@ -45,7 +44,7 @@ msg_ok "Installed Dependencies"
 PHP_VERSION="8.4" PHP_FPM="YES" PHP_MODULE="curl,mbstring,memcached,mysql,redis,xml" setup_php
 # Dataserver code opens files with `<?` short tags; PHP defaults to short_open_tag=Off
 echo "short_open_tag = On" >/etc/php/8.4/cli/conf.d/99-zotero-short-tags.ini
-setup_composer
+# No composer here: the release ships a vendor/ tree resolved against the same PHP version.
 setup_mariadb
 NODE_VERSION="22" setup_nodejs
 
@@ -63,10 +62,9 @@ EOF
 systemctl restart mariadb
 msg_ok "Configured MariaDB"
 
-fetch_and_deploy_from_url "https://github.com/zotero/dataserver/archive/${DATASERVER_COMMIT}.tar.gz" "/opt/dataserver"
-fetch_and_deploy_from_url "https://github.com/zotero/zotero-schema/archive/refs/heads/master.tar.gz" "/opt/dataserver/htdocs/zotero-schema"
-fetch_and_deploy_from_url "https://github.com/zotero/stream-server/archive/refs/heads/master.tar.gz" "/opt/stream-server"
-fetch_and_deploy_from_url "https://github.com/zotero/tinymce-clean-server/archive/refs/heads/master.tar.gz" "/opt/tinymce-clean-server"
+fetch_and_deploy_gh_release "zotero-dataserver" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/dataserver" "zotero-dataserver.tar.gz"
+fetch_and_deploy_from_url "https://github.com/zotero/stream-server/archive/${STREAM_SERVER_COMMIT}.tar.gz" "/opt/stream-server"
+fetch_and_deploy_from_url "https://github.com/zotero/tinymce-clean-server/archive/${HTMLCLEAN_COMMIT}.tar.gz" "/opt/tinymce-clean-server"
 
 msg_info "Setting up MinIO"
 curl -fsSL -o /usr/local/bin/minio "https://dl.min.io/server/minio/release/linux-amd64/minio"
@@ -97,21 +95,7 @@ $STD mcli mb zotero/zotero
 $STD mcli mb zotero/zotero-fulltext
 msg_ok "Set up MinIO"
 
-msg_info "Installing Dataserver Dependencies"
-cd /opt/dataserver
-export COMPOSER_ALLOW_SUPERUSER=1
-$STD composer install --no-dev --no-interaction
 mkdir -p /opt/dataserver/tmp /var/log/zotero
-msg_ok "Installed Dataserver Dependencies"
-
-msg_info "Setup Zend Framework 1"
-fetch_and_deploy_gh_release "zf1-future" "Shardj/zf1-future" "tarball" "release-${ZF1_VERSION}" "/opt/zf1-future"
-# admin/* CLI scripts call set_include_path("../include"), discarding any php.ini value, so
-# the library has to live at include/Zend - the path upstream expects and the FPM pool sets.
-rm -rf /opt/dataserver/include/Zend
-mv /opt/zf1-future/library/Zend /opt/dataserver/include/Zend
-rm -rf /opt/zf1-future
-msg_ok "Setup Zend Framework 1"
 
 msg_info "Configuring Dataserver"
 cat <<EOF >/opt/dataserver/include/config/config.inc.php
@@ -139,6 +123,9 @@ class Z_CONFIG {
 	public static \$AWS_ACCESS_KEY = '${MINIO_USER}';
 	public static \$AWS_SECRET_KEY = '${MINIO_PASS}';
 	public static \$S3_ENDPOINT = 'http://${LOCAL_IP}:9000';
+	// MinIO implements no storage classes; both keys are read unconditionally by the
+	// patched build, so they must be declared here even when left at a default.
+	public static \$S3_STORAGE_CLASS = 'STANDARD';
 	public static \$S3_BUCKET = 'zotero';
 	public static \$S3_BUCKET_CACHE = '';
 	public static \$S3_BUCKET_FULLTEXT = 'zotero-fulltext';
@@ -257,18 +244,6 @@ function Zotero_dbConnectAuth(\$db) {
 ?>
 EOF
 
-# Point the AWS SDK S3 client at MinIO (path-style, custom endpoint)
-sed -i "s#^\t'retries' => 2\$#\t'retries' => 2,\n\t'S3' => [\n\t\t'endpoint' => Z_CONFIG::\$S3_ENDPOINT,\n\t\t'use_path_style_endpoint' => true\n\t]#" /opt/dataserver/include/header.inc.php
-sed -i 's#return "https://" . Z_CONFIG::$S3_BUCKET . ".s3.amazonaws.com/";#return Z_CONFIG::$S3_ENDPOINT . "/" . Z_CONFIG::$S3_BUCKET . "/";#' /opt/dataserver/model/Storage.inc.php
-sed -i "s#'StorageClass' => 'INTELLIGENT_TIERING'#'StorageClass' => 'STANDARD'#" /opt/dataserver/model/Storage.inc.php
-sed -i "s#'StorageClass' => strlen(\$json) < self::\$minFileSizeStandardIA ? 'STANDARD' : 'STANDARD_IA'#'StorageClass' => 'STANDARD'#" /opt/dataserver/model/FullText.inc.php
-# MySQL 8.0.19 row aliases (VALUES ... AS new) are unsupported by MariaDB and break
-# post-upload file registration; rewrite to the portable VALUES() form
-sed -i \
-  -e 's#VALUES (?,?,?,?) AS new$#VALUES (?,?,?,?)#' \
-  -e 's#ON DUPLICATE KEY UPDATE storageFileID=new.storageFileID, mtime=new.mtime, size=new.size#ON DUPLICATE KEY UPDATE storageFileID=VALUES(storageFileID), mtime=VALUES(mtime), size=VALUES(size)#' \
-  /opt/dataserver/model/Storage.inc.php
-gzip -kf /opt/dataserver/htdocs/zotero-schema/schema.json
 msg_ok "Configured Dataserver"
 
 msg_info "Initializing Databases"
@@ -587,180 +562,9 @@ msg_ok "Configured PHP-FPM and nginx"
 
 msg_info "Writing Client Patch Script"
 mkdir -p /opt/zotero-dataserver_data/client-patch
-cat <<'PATCHEOF' >/opt/zotero-dataserver_data/client-patch/patch-zotero-client.sh
-#!/usr/bin/env bash
-# Repoint an installed Zotero desktop client at a self-hosted zotero-dataserver by
-# rewriting the sync URLs inside app/omni.ja.
-#
-# Supports the Flathub build (org.zotero.Zotero), tarball installs and distro
-# packages. Re-run after every Zotero update - an update replaces omni.ja.
-#
-# Usage:
-#   ./patch-zotero-client.sh http://192.168.1.50               # auto-detect
-#   ./patch-zotero-client.sh http://192.168.1.50 --dir /usr/lib/zotero
-#   ./patch-zotero-client.sh http://192.168.1.50 --omni ./omni.ja
-#   ./patch-zotero-client.sh --revert
-#
-# Flatpak notes:
-#   * The app lives at <deploy>/files/share/zotero, which is a read-only OSTree
-#     checkout whose files are hardlinked into the flatpak repo. The patched
-#     omni.ja is therefore installed with `cp --remove-destination`, which breaks
-#     the hardlink instead of writing through it into the shared repo object.
-#   * A system-wide install needs sudo; a --user install does not.
-#   * `flatpak update` restores the pristine omni.ja. Pin the version with
-#     `flatpak mask org.zotero.Zotero` (add --user for a user install) if you do
-#     not want to re-patch.
-
-set -euo pipefail
-
-FLATPAK_ID="org.zotero.Zotero"
-BACKUP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/zotero-selfhost"
-BACKUP_OMNI="$BACKUP_DIR/omni.ja.orig"
-BACKUP_META="$BACKUP_DIR/omni.ja.source"
-
-die() {
-  printf 'error: %s\n' "$1" >&2
-  exit 1
-}
-
-usage() {
-  sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'
-  exit 64
-}
-
-BASE_URL="@@BASE_URL@@"
-ZOTERO_DIR=""
-OMNI=""
-REVERT=0
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --revert) REVERT=1; shift ;;
-    --dir) ZOTERO_DIR="${2:-}"; shift 2 ;;
-    --omni) OMNI="${2:-}"; shift 2 ;;
-    -h|--help) usage ;;
-    -*) die "unknown option: $1" ;;
-    *) BASE_URL="$1"; shift ;;
-  esac
-done
-
-for tool in unzip zip; do
-  command -v "$tool" >/dev/null || die "$tool is required"
-done
-
-# Locate omni.ja: explicit path > explicit install dir > flatpak > common prefixes.
-FLATPAK_INSTALL=0
-locate_omni() {
-  [[ -n "$OMNI" ]] && return 0
-
-  if [[ -n "$ZOTERO_DIR" ]]; then
-    OMNI="$ZOTERO_DIR/app/omni.ja"
-    return 0
-  fi
-
-  local loc
-  if command -v flatpak >/dev/null && loc="$(flatpak info --show-location "$FLATPAK_ID" 2>/dev/null)"; then
-    OMNI="$loc/files/share/zotero/app/omni.ja"
-    FLATPAK_INSTALL=1
-    return 0
-  fi
-
-  local dir
-  for dir in /usr/lib/zotero /usr/lib64/zotero /opt/zotero "$HOME/opt/zotero" "$HOME/.local/opt/zotero"; do
-    if [[ -f "$dir/app/omni.ja" ]]; then
-      OMNI="$dir/app/omni.ja"
-      return 0
-    fi
-  done
-
-  die "no Zotero installation found - pass --dir <install dir> or --omni <path>"
-}
-
-# sudo only when the containing directory is not writable (system flatpak, /usr).
-SUDO=""
-need_sudo() {
-  local dir
-  dir="$(dirname "$OMNI")"
-  if [[ ! -w "$dir" ]]; then
-    command -v sudo >/dev/null || die "$dir is not writable and sudo is unavailable"
-    SUDO="sudo"
-  fi
-}
-
-if [[ "$REVERT" == 1 ]]; then
-  [[ -f "$BACKUP_OMNI" ]] || die "no backup at $BACKUP_OMNI"
-  [[ -n "$OMNI" ]] || OMNI="$(cat "$BACKUP_META" 2>/dev/null || true)"
-  [[ -n "$OMNI" ]] || die "backup has no recorded target - pass --omni <path>"
-  need_sudo
-  $SUDO cp --remove-destination "$BACKUP_OMNI" "$OMNI"
-  $SUDO chmod 644 "$OMNI"
-  printf 'restored %s from %s\n' "$OMNI" "$BACKUP_OMNI"
-  exit 0
-fi
-
-[[ -n "$BASE_URL" ]] || usage
-locate_omni
-[[ -f "$OMNI" ]] || die "omni.ja not found at $OMNI"
-
-BASE_URL="${BASE_URL%/}"
-[[ "$BASE_URL" == http://* || "$BASE_URL" == https://* ]] || die "base URL must start with http:// or https://"
-HOST="${BASE_URL#*://}"
-WS_SCHEME="ws"
-[[ "$BASE_URL" == https://* ]] && WS_SCHEME="wss"
-
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-
-# omni.ja is a Mozilla-"optimized" zip; unzip reports a warning (exit 1) but
-# extracts correctly. Only exit codes > 1 are real failures.
-set +e
-unzip -q "$OMNI" -d "$WORK/omni"
-rc=$?
-set -e
-(( rc <= 1 )) || die "unzip failed (exit $rc)"
-
-CONFIG="$WORK/omni/resource/config.mjs"
-[[ -f "$CONFIG" ]] || CONFIG="$WORK/omni/resource/config.js"
-[[ -f "$CONFIG" ]] || die "resource/config.mjs or resource/config.js not found inside omni.ja"
-
-sed -i \
-  -e "s#BASE_URI: '[^']*'#BASE_URI: '${BASE_URL}/'#" \
-  -e "s#WWW_BASE_URL: '[^']*'#WWW_BASE_URL: '${BASE_URL}/'#" \
-  -e "s#API_URL: '[^']*'#API_URL: '${BASE_URL}/api/'#" \
-  -e "s#STREAMING_URL: '[^']*'#STREAMING_URL: '${WS_SCHEME}://${HOST}/stream'#" \
-  "$CONFIG"
-
-grep -q "API_URL: '${BASE_URL}/api/'" "$CONFIG" || die "patching $CONFIG failed - config format changed?"
-
-( cd "$WORK/omni" && zip -qr9XD "$WORK/omni.ja" . )
-
-mkdir -p "$BACKUP_DIR"
-if [[ ! -f "$BACKUP_OMNI" ]]; then
-  cp "$OMNI" "$BACKUP_OMNI"
-  printf '%s\n' "$OMNI" >"$BACKUP_META"
-  printf 'backup: %s\n' "$BACKUP_OMNI"
-fi
-
-need_sudo
-$SUDO cp --remove-destination "$WORK/omni.ja" "$OMNI"
-$SUDO chmod 644 "$OMNI"
-
-printf 'patched %s\n' "$OMNI"
-sed -n "/BASE_URI:/p;/WWW_BASE_URL:/p;/API_URL:/p;/STREAMING_URL:/p" "$CONFIG"
-
-if [[ "$FLATPAK_INSTALL" == 1 ]]; then
-  cat <<EOF
-
-Next steps (flatpak):
-  flatpak run $FLATPAK_ID -purgecaches
-  # optional, keeps updates from reverting the patch:
-  flatpak mask $FLATPAK_ID
-EOF
-else
-  printf '\nNext step: start Zotero once with "zotero -purgecaches"\n'
-fi
-PATCHEOF
-sed -i "s|@@BASE_URL@@|${BASE_URL}|" /opt/zotero-dataserver_data/client-patch/patch-zotero-client.sh
+# Shipped inside the release so the server and the client-side URL rewrite stay one
+# versioned unit; an update refreshes both.
+cp /opt/dataserver/selfhosted/patch-zotero-client.sh /opt/zotero-dataserver_data/client-patch/
 chmod +x /opt/zotero-dataserver_data/client-patch/patch-zotero-client.sh
 
 cat <<EOF >/opt/zotero-dataserver_data/client-patch/README
@@ -768,11 +572,10 @@ Zotero self-hosted sync: client setup
 =====================================
 
 1. Copy patch-zotero-client.sh to the machine with the Zotero desktop client.
-2. Run it there:
-     ./patch-zotero-client.sh                  # auto-detects flatpak or a local install
-     ./patch-zotero-client.sh --dir /usr/lib/zotero
-   The server URL (${BASE_URL}) is already baked in; sudo is used automatically
-   when the install directory is not writable.
+2. Run it there, passing this server's URL:
+     ./patch-zotero-client.sh ${BASE_URL}                  # auto-detects flatpak or a local install
+     ./patch-zotero-client.sh ${BASE_URL} --dir /usr/lib/zotero
+   sudo is used automatically when the install directory is not writable.
 3. Restart Zotero once with purged caches:
      flatpak run org.zotero.Zotero -purgecaches      # flatpak install
      zotero -purgecaches                             # tarball/distro install

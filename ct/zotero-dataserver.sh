@@ -30,7 +30,41 @@ function update_script() {
     exit
   fi
 
-  msg_error "This proof-of-concept script has no update path yet. Upstream zotero/dataserver publishes no releases; recreate the container to update."
+  msg_info "Stopping Services"
+  systemctl stop nginx php8.4-fpm
+  msg_ok "Stopped Services"
+
+  # The generated config and the runtime scratch dir are not part of the release and
+  # would be destroyed by the redeploy, which overwrites /opt/dataserver in place.
+  msg_info "Preserving Configuration"
+  BACKUP_DIR="$(mktemp -d)"
+  cp -a /opt/dataserver/include/config "$BACKUP_DIR/config"
+  msg_ok "Preserved Configuration"
+
+  fetch_and_deploy_gh_release "zotero-dataserver" "esatbayhan/zotero-selfhosted" "prebuild" "latest" "/opt/dataserver" "zotero-dataserver.tar.gz"
+
+  msg_info "Restoring Configuration"
+  cp -a "$BACKUP_DIR/config/." /opt/dataserver/include/config/
+  rm -rf "$BACKUP_DIR"
+  mkdir -p /opt/dataserver/tmp
+  cp /opt/dataserver/selfhosted/patch-zotero-client.sh /opt/zotero-dataserver_data/client-patch/
+  chmod +x /opt/zotero-dataserver_data/client-patch/patch-zotero-client.sh
+  chown -R www-data:www-data /opt/dataserver
+  msg_ok "Restored Configuration"
+
+  # A release may add columns or tables; upstream's own migration entrypoint is idempotent.
+  # It must run from admin/, which resolves its includes via set_include_path("../include").
+  msg_info "Applying Schema Updates"
+  cd /opt/dataserver/admin
+  $STD php ./schema_update
+  msg_ok "Applied Schema Updates"
+
+  msg_info "Starting Services"
+  systemctl start php8.4-fpm nginx
+  msg_ok "Started Services"
+
+  msg_ok "Updated Successfully"
+  echo -e "${INFO}${YW}Re-run the client patch script on each desktop if the release changed it.${CL}"
   exit
 }
 
