@@ -441,6 +441,14 @@ location /static/web-library/ {
     # Bundle filenames are not content-hashed; force revalidation so a release
     # update is picked up immediately (unchanged assets still answer 304).
     add_header Cache-Control "no-cache";
+
+    # nginx's stock mime.types has no entry for .mjs, so these fall back to
+    # application/octet-stream - and browsers hard-refuse ES modules with a
+    # non-JavaScript MIME type, which breaks the reader (viewer.mjs, pdf.mjs
+    # and the pdf.js worker are all ES modules).
+    location ~ \.mjs$ {
+        default_type text/javascript;
+    }
 }
 
 # Every remaining path is an SPA route; the gate serves the entry page - or a
