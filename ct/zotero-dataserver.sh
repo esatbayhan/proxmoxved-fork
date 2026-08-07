@@ -31,7 +31,7 @@ function update_script() {
   fi
 
   msg_info "Stopping Services"
-  systemctl stop nginx php8.4-fpm
+  systemctl stop nginx php8.4-fpm zotero-stream-server zotero-htmlclean
   msg_ok "Stopped Services"
 
   # The generated config and the runtime scratch dir are not part of the release and
@@ -52,6 +52,24 @@ function update_script() {
   chown -R www-data:www-data /opt/dataserver
   msg_ok "Restored Configuration"
 
+  fetch_and_deploy_gh_release "zotero-stream-server" "esatbayhan/zotero-selfhosted" "prebuild" "latest" "/opt/stream-server" "stream-server.tar.gz"
+  fetch_and_deploy_gh_release "zotero-htmlclean" "esatbayhan/zotero-selfhosted" "prebuild" "latest" "/opt/tinymce-clean-server" "tinymce-clean-server.tar.gz"
+
+  # The stream-server config is the shipped config/default.js with values edited in place,
+  # so a redeploy reverts it. The values are static, so re-applying them (idempotently)
+  # beats backup/restore, which would hide config keys a newer upstream adds.
+  msg_info "Updating Node Services"
+  cd /opt/stream-server
+  sed -i "s#httpPort: .*#httpPort: 8081,#" config/default.js
+  sed -i "s#apiURL: .*#apiURL: 'http://127.0.0.1:8080/',#" config/default.js
+  sed -i "/redis: {/,/}/s#host: .*#url: 'redis://localhost:6379',#" config/default.js
+  sed -i "s#trustedProxies: .*#trustedProxies: ['127.0.0.1'],#" config/default.js
+  $STD npm install
+  cd /opt/tinymce-clean-server
+  $STD npm install
+  chown -R www-data:www-data /opt/stream-server /opt/tinymce-clean-server
+  msg_ok "Updated Node Services"
+
   # A release may add columns or tables; upstream's own migration entrypoint is idempotent.
   # It must run from admin/, which resolves its includes via set_include_path("../include").
   msg_info "Applying Schema Updates"
@@ -60,7 +78,7 @@ function update_script() {
   msg_ok "Applied Schema Updates"
 
   msg_info "Starting Services"
-  systemctl start php8.4-fpm nginx
+  systemctl start php8.4-fpm nginx zotero-stream-server zotero-htmlclean
   msg_ok "Started Services"
 
   msg_ok "Updated Successfully"

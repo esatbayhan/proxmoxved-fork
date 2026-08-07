@@ -16,12 +16,10 @@ update_os
 # Upstream zotero/dataserver publishes no releases and needs patches plus dependencies it
 # injects at image-build time, so the deployable artifact is built out-of-band. The release
 # ships the patched source, Zend Framework 1 at include/Zend, the composer vendor tree and
-# the item schema. Its patch series and pins are documented in the build repo.
+# the item schema — plus the two Node services as separate assets, repacked at their pinned
+# commits because those repos publish no releases either. Every upstream pin lives in the
+# build repo's upstream.env; this script always deploys the latest release.
 SELFHOSTED_REPO="esatbayhan/zotero-selfhosted"
-# Node services, still fetched from upstream. Pinned because these repos have no releases
-# either and master is a moving target.
-STREAM_SERVER_COMMIT="55cb51c85f6787261d878529aaa440cbc08b8f15"
-HTMLCLEAN_COMMIT="5be2a0d367133b728872bee9975beed1c9e74898"
 
 SYNC_USER="zotero"
 SYNC_PASS="$(openssl rand -hex 12)"
@@ -63,8 +61,8 @@ systemctl restart mariadb
 msg_ok "Configured MariaDB"
 
 fetch_and_deploy_gh_release "zotero-dataserver" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/dataserver" "zotero-dataserver.tar.gz"
-fetch_and_deploy_from_url "https://github.com/zotero/stream-server/archive/${STREAM_SERVER_COMMIT}.tar.gz" "/opt/stream-server"
-fetch_and_deploy_from_url "https://github.com/zotero/tinymce-clean-server/archive/${HTMLCLEAN_COMMIT}.tar.gz" "/opt/tinymce-clean-server"
+fetch_and_deploy_gh_release "zotero-stream-server" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/stream-server" "stream-server.tar.gz"
+fetch_and_deploy_gh_release "zotero-htmlclean" "$SELFHOSTED_REPO" "prebuild" "latest" "/opt/tinymce-clean-server" "tinymce-clean-server.tar.gz"
 
 msg_info "Setting up MinIO"
 curl -fsSL -o /usr/local/bin/minio "https://dl.min.io/server/minio/release/linux-amd64/minio"
