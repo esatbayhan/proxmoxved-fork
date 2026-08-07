@@ -55,7 +55,7 @@ function update_script() {
   # The login page ships in the release but is meant to be adapted by the admin
   # (branding, forward auth). Replace it only while it is still the pristine
   # shipped copy; otherwise land the new version next to it for manual merging.
-  msg_info "Updating Login Page and Account Tool"
+  msg_info "Updating Login Page and Admin Tools"
   # The page requires the dataserver config files, which use `<?` short tags;
   # installs from before the release-shipped page lack this FPM override.
   echo "short_open_tag = On" >/etc/php/8.4/fpm/conf.d/99-zotero-short-tags.ini
@@ -76,6 +76,7 @@ function update_script() {
     msg_ok "Updated Login Page"
   fi
   install -m 0755 /opt/dataserver/selfhosted/zotero-create-user /usr/local/bin/zotero-create-user
+  install -m 0755 /opt/dataserver/selfhosted/zotero-set-url /usr/local/bin/zotero-set-url
 
   # The web library updates only where it is installed: the nginx vhost is
   # admin-owned territory after install, so retrofitting the feature onto an

@@ -410,8 +410,8 @@ chown -R www-data:www-data /opt/stream-server /opt/tinymce-clean-server
 systemctl enable -q --now zotero-stream-server zotero-htmlclean
 msg_ok "Configured HTML Clean Server"
 
-msg_info "Configuring Login Page and Account Tool"
-# Both ship in the release under selfhosted/. The login page reads the dataserver
+msg_info "Configuring Login Page and Admin Tools"
+# All three ship in the release under selfhosted/. The login page reads the dataserver
 # config at runtime, so the shipped file deploys verbatim; the pristine copy lets
 # the update script distinguish local admin modifications from the shipped state.
 mkdir -p /opt/zotero-login
@@ -419,7 +419,8 @@ cp /opt/dataserver/selfhosted/login/index.php /opt/zotero-login/index.php
 cp /opt/dataserver/selfhosted/login/index.php /opt/zotero-login/.index.php.orig
 chown -R www-data:www-data /opt/zotero-login
 install -m 0755 /opt/dataserver/selfhosted/zotero-create-user /usr/local/bin/zotero-create-user
-msg_ok "Configured Login Page and Account Tool"
+install -m 0755 /opt/dataserver/selfhosted/zotero-set-url /usr/local/bin/zotero-set-url
+msg_ok "Configured Login Page and Admin Tools"
 
 if [[ "$ZOTERO_WEB_LIBRARY" != "no" ]]; then
   msg_info "Configuring Web Library"
@@ -576,10 +577,17 @@ There is deliberately no self-service registration.
 Web library (browser client, EPUB/PDF reader included): ${BASE_URL}/ -
 sign in with the same account. No client patching needed.
 
+Moving this server to a different address (a new IP, a Tailscale address, a
+hostname) or putting TLS in front of it: run "zotero-set-url <URL>" on the
+server, then re-run the patch script above with the same URL on every client.
+Do not hand-edit the config for this - the address also lives in the S3
+endpoint MinIO signs attachment URLs with, and updating only the public URLs
+leaves sync working while every attachment download hangs.
+
 HTTPS: terminate TLS in a reverse proxy of your choice in front of this
-container, then update the URLs in
-/opt/dataserver/include/config/config.inc.php and re-run the client patch
-script with the new https:// URL.
+container, then run "zotero-set-url https://your.host". MinIO on port 9000
+speaks plain HTTP, so serve it through the same terminator and pass its URL
+with --s3-endpoint; otherwise the browser blocks attachments as mixed content.
 
 Fallback without the login page: create an API key via
   curl -X POST ${BASE_URL}/api/keys -H 'Zotero-API-Version: 3' \\
@@ -601,6 +609,7 @@ MariaDB (${DB_USER}): ${DB_PASS}
 MinIO root (${MINIO_USER}): ${MINIO_PASS}  Endpoint: http://${LOCAL_IP}:9000
 
 Additional accounts: zotero-create-user <username>
+Server moved to a different address: zotero-set-url <URL>
 EOF
 if [[ "$ZOTERO_WEB_LIBRARY" != "no" ]]; then
   echo "Web library: ${BASE_URL}/ (sign in with the sync account)" >>/root/zotero-dataserver.creds
